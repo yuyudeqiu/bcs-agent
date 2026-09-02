@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -31,11 +32,13 @@ type Client interface {
 
 // GatewayClient 通过 BCS /clusters/{clusterID} 代理访问 Kubernetes 原生 API。
 type GatewayClient struct {
-	cfg config.BCSConfig
+	cfg            config.BCSConfig
+	discoveryMu    sync.RWMutex
+	discoveryCache map[string]discoveryCacheEntry
 }
 
 func NewGatewayClient(cfg config.BCSConfig) *GatewayClient {
-	return &GatewayClient{cfg: cfg}
+	return &GatewayClient{cfg: cfg, discoveryCache: make(map[string]discoveryCacheEntry)}
 }
 
 var clusterIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)

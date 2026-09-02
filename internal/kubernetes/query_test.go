@@ -38,6 +38,9 @@ func serveDiscovery(w http.ResponseWriter, r *http.Request) bool {
 	case "/gateway/clusters/BCS-K8S-10001/apis/apps/v1":
 		fmt.Fprint(w, appsDiscovery)
 		return true
+	case "/gateway/clusters/BCS-K8S-10001/apis":
+		fmt.Fprint(w, `{"kind":"APIGroupList","apiVersion":"v1","groups":[{"name":"apps","versions":[{"groupVersion":"apps/v1","version":"v1"}],"preferredVersion":{"groupVersion":"apps/v1","version":"v1"}}]}`)
+		return true
 	}
 	return false
 }
@@ -145,9 +148,8 @@ func TestQueryValidationBeforeRequest(t *testing.T) {
 	valid := QueryRequest{ClusterID: "BCS-K8S-10001", Action: "list", Kind: "Pod", Namespace: "default"}
 	for _, change := range []func(*QueryRequest){
 		func(q *QueryRequest) { q.ClusterID = "../bad" }, func(q *QueryRequest) { q.Action = "delete" },
-		func(q *QueryRequest) { q.Kind = "Secret" }, func(q *QueryRequest) { q.Kind = "pods/log" },
-		func(q *QueryRequest) { q.Namespace = "" }, func(q *QueryRequest) { q.Namespace = "../bad" },
-		func(q *QueryRequest) { q.AllNamespaces = true }, func(q *QueryRequest) { q.Kind = "Node" },
+		func(q *QueryRequest) { q.Kind = "pods/log" }, func(q *QueryRequest) { q.Namespace = "../bad" },
+		func(q *QueryRequest) { q.AllNamespaces = true },
 		func(q *QueryRequest) { q.Action = "get" }, func(q *QueryRequest) { q.Name = "web" },
 		func(q *QueryRequest) { q.Limit = -1 }, func(q *QueryRequest) { q.Limit = 101 },
 		func(q *QueryRequest) { q.Action = "get"; q.Name = "../web" },
@@ -254,6 +256,113 @@ func TestQueryEmptyListAndMock(t *testing.T) {
 		q.Name = "missing"
 		if _, err := mock.Query(context.Background(), q); !apierrors.IsNotFound(err) {
 			t.Fatalf("expected not found, got %v", err)
+		}
+	}
+}
+
+func TestQueryDiscoveryCRDVersionsAmbiguityAndCache(t *testing.T) {
+	discoveryCalls := 0
+	resourceCalls := 0
+	client := queryTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gateway/clusters/BCS-K8S-10001/api/v1":
+			discoveryCalls++
+			fmt.Fprint(w, `{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"v1","resources":[{"name":"pods","kind":"Pod","namespaced":true,"verbs":["list","get"]},{"name":"secrets","kind":"Secret","namespaced":true,"verbs":["list","get"]}]}`)
+		case "/gateway/clusters/BCS-K8S-10001/apis":
+			discoveryCalls++
+			fmt.Fprint(w, `{"kind":"APIGroupList","apiVersion":"v1","groups":[
+				{"name":"batch","versions":[{"groupVersion":"batch/v1beta1","version":"v1beta1"}],"preferredVersion":{"groupVersion":"batch/v1beta1","version":"v1beta1"}},
+				{"name":"example.io","versions":[{"groupVersion":"example.io/v1","version":"v1"},{"groupVersion":"example.io/v1beta1","version":"v1beta1"}],"preferredVersion":{"groupVersion":"example.io/v1","version":"v1"}},
+				{"name":"other.io","versions":[{"groupVersion":"other.io/v1","version":"v1"}],"preferredVersion":{"groupVersion":"other.io/v1","version":"v1"}}
+			]}`)
+		case "/gateway/clusters/BCS-K8S-10001/apis/batch/v1beta1":
+			discoveryCalls++
+			fmt.Fprint(w, `{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"batch/v1beta1","resources":[{"name":"cronjobs","kind":"CronJob","namespaced":true,"verbs":["list","get"]}]}`)
+		case "/gateway/clusters/BCS-K8S-10001/apis/example.io/v1":
+			discoveryCalls++
+			fmt.Fprint(w, `{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"example.io/v1","resources":[{"name":"widgets","kind":"Widget","namespaced":true,"verbs":["list","get"]}]}`)
+		case "/gateway/clusters/BCS-K8S-10001/apis/other.io/v1":
+			discoveryCalls++
+			fmt.Fprint(w, `{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"other.io/v1","resources":[{"name":"widgets","kind":"Widget","namespaced":true,"verbs":["list","get"]}]}`)
+		case "/gateway/clusters/BCS-K8S-10001/apis/example.io/v1beta1":
+			discoveryCalls++
+			fmt.Fprint(w, `{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"example.io/v1beta1","resources":[{"name":"widgets","kind":"Widget","namespaced":true,"verbs":["list","get"]}]}`)
+		case "/gateway/clusters/BCS-K8S-10001/apis/batch/v1beta1/namespaces/default/cronjobs":
+			resourceCalls++
+			fmt.Fprint(w, `{"apiVersion":"batch/v1beta1","kind":"CronJobList","items":[{"metadata":{"name":"cleanup","namespace":"default"}}]}`)
+		case "/gateway/clusters/BCS-K8S-10001/apis/example.io/v1beta1/namespaces/default/widgets/example":
+			resourceCalls++
+			fmt.Fprint(w, `{"apiVersion":"example.io/v1beta1","kind":"Widget","metadata":{"name":"example","namespace":"default"},"status":{"phase":"Ready","conditions":[{"type":"Available","status":"True","message":"working"}]}}`)
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	})
+
+	query := QueryRequest{ClusterID: "BCS-K8S-10001", Action: "list", Kind: "CronJob", Namespace: "default"}
+	for i := 0; i < 2; i++ {
+		got, err := client.Query(context.Background(), query)
+		if err != nil || got.GVR != (ResourceRef{Group: "batch", Version: "v1beta1", Resource: "cronjobs"}) || got.Count != 1 {
+			t.Fatalf("CronJob query = %+v, %v", got, err)
+		}
+	}
+	if discoveryCalls != 5 || resourceCalls != 2 {
+		t.Fatalf("discovery cache not reused: discovery=%d resource=%d", discoveryCalls, resourceCalls)
+	}
+
+	_, err := client.Query(context.Background(), QueryRequest{ClusterID: "BCS-K8S-10001", Action: "list", Kind: "Widget", Namespace: "default"})
+	if err == nil || !strings.Contains(err.Error(), "example.io/v1/widgets") || !strings.Contains(err.Error(), "other.io/v1/widgets") {
+		t.Fatalf("expected bounded ambiguity candidates, got %v", err)
+	}
+	got, err := client.Query(context.Background(), QueryRequest{
+		ClusterID: "BCS-K8S-10001", Action: "get", Kind: "Widget", Namespace: "default", Name: "example",
+		GVR: &ResourceRef{Group: "example.io", Version: "v1beta1", Resource: "widgets"},
+	})
+	if err != nil || got.GVR.Version != "v1beta1" || got.Items[0].Details["phase"] != "Ready" {
+		t.Fatalf("explicit non-preferred GVR = %+v, %v", got, err)
+	}
+	if discoveryCalls != 6 || resourceCalls != 3 {
+		t.Fatalf("unexpected exact discovery counts: discovery=%d resource=%d", discoveryCalls, resourceCalls)
+	}
+	// 精确版本缓存不能冒充 Kind 的 preferred 映射；随后按 Kind 查询仍需完整 Discovery。
+	fresh := NewGatewayClient(client.cfg)
+	_, err = fresh.Query(context.Background(), QueryRequest{
+		ClusterID: "BCS-K8S-10001", Action: "get", Namespace: "default", Name: "example",
+		GVR: &ResourceRef{Group: "example.io", Version: "v1beta1", Resource: "widgets"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = fresh.Query(context.Background(), QueryRequest{ClusterID: "BCS-K8S-10001", Action: "list", Kind: "Widget", Namespace: "default"})
+	if err == nil || !strings.Contains(err.Error(), "多个 API Group") {
+		t.Fatalf("exact GVR cache incorrectly became preferred mapping: %v", err)
+	}
+	if discoveryCalls != 12 || resourceCalls != 4 {
+		t.Fatalf("unexpected refresh counts: discovery=%d resource=%d", discoveryCalls, resourceCalls)
+	}
+
+	_, err = client.Query(context.Background(), QueryRequest{ClusterID: "BCS-K8S-10001", Action: "list", Kind: "Secret", Namespace: "default"})
+	if err == nil || !strings.Contains(err.Error(), "不允许读取 Secret") {
+		t.Fatalf("Secret access was not denied: %v", err)
+	}
+}
+
+func TestQueryExplicitGVRValidation(t *testing.T) {
+	valid := QueryRequest{ClusterID: "BCS-K8S-10001", Action: "list", GVR: &ResourceRef{Group: "example.io", Version: "v1", Resource: "widgets"}, Namespace: "default"}
+	for _, change := range []func(*QueryRequest){
+		func(q *QueryRequest) { q.GVR.Version = "" },
+		func(q *QueryRequest) { q.GVR.Resource = "" },
+		func(q *QueryRequest) { q.GVR.Group = "../bad" },
+		func(q *QueryRequest) { q.GVR.Version = "v1/bad" },
+		func(q *QueryRequest) { q.GVR.Resource = "widgets/status" },
+		func(q *QueryRequest) { q.Kind = "Widget/Status" },
+	} {
+		q := valid
+		copyGVR := *valid.GVR
+		q.GVR = &copyGVR
+		change(&q)
+		if err := q.NormalizeAndValidate(); err == nil {
+			t.Errorf("accepted invalid GVR: %+v", q)
 		}
 	}
 }

@@ -4,33 +4,34 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/restmapper"
 )
 
 type QueryRequest struct {
-	ClusterID     string `json:"cluster_id"`
-	Action        string `json:"action"`
-	Kind          string `json:"kind"`
-	Namespace     string `json:"namespace,omitempty"`
-	AllNamespaces bool   `json:"all_namespaces,omitempty"`
-	Name          string `json:"name,omitempty"`
-	Limit         int64  `json:"limit,omitempty"`
-	Continue      string `json:"continue,omitempty"`
+	ClusterID     string       `json:"cluster_id"`
+	Action        string       `json:"action"`
+	Kind          string       `json:"kind"`
+	GVR           *ResourceRef `json:"gvr,omitempty"`
+	Namespace     string       `json:"namespace,omitempty"`
+	AllNamespaces bool         `json:"all_namespaces,omitempty"`
+	Name          string       `json:"name,omitempty"`
+	Limit         int64        `json:"limit,omitempty"`
+	Continue      string       `json:"continue,omitempty"`
 }
 
 type QueryResult struct {
 	ClusterID     string            `json:"cluster_id"`
 	Action        string            `json:"action"`
 	Kind          string            `json:"kind"`
+	GVR           ResourceRef       `json:"gvr"`
 	Namespace     string            `json:"namespace,omitempty"`
 	AllNamespaces bool              `json:"all_namespaces,omitempty"`
 	Source        string            `json:"source"`
@@ -62,6 +63,8 @@ var queryResources = map[string]queryResource{
 	"Event":      {schema.GroupVersion{Version: "v1"}, true},
 }
 
+var kindPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
+
 // NormalizeAndValidate 同时供工具、真实客户端和 Mock 使用，校验发生在请求之前。
 func (q *QueryRequest) NormalizeAndValidate() error {
 	q.ClusterID = strings.TrimSpace(q.ClusterID)
@@ -72,9 +75,29 @@ func (q *QueryRequest) NormalizeAndValidate() error {
 	if err := validateClusterID(q.ClusterID); err != nil {
 		return err
 	}
-	resource, ok := queryResources[q.Kind]
-	if !ok {
-		return fmt.Errorf("kind 仅支持 Pod、Namespace、Deployment、Node、Event")
+	if q.GVR == nil {
+		if !kindPattern.MatchString(q.Kind) {
+			return fmt.Errorf("未指定 gvr 时必须提供格式有效的 kind")
+		}
+	} else {
+		q.GVR.Group = strings.TrimSpace(q.GVR.Group)
+		q.GVR.Version = strings.TrimSpace(q.GVR.Version)
+		q.GVR.Resource = strings.TrimSpace(q.GVR.Resource)
+		if q.Kind != "" && !kindPattern.MatchString(q.Kind) {
+			return fmt.Errorf("kind 格式无效")
+		}
+		if q.GVR.Group != "" && len(validation.IsDNS1123Subdomain(q.GVR.Group)) != 0 {
+			return fmt.Errorf("gvr.group 格式无效")
+		}
+		if len(validation.IsDNS1123Label(q.GVR.Version)) != 0 {
+			return fmt.Errorf("gvr.version 格式无效")
+		}
+		if len(validation.IsDNS1123Subdomain(q.GVR.Resource)) != 0 {
+			return fmt.Errorf("gvr.resource 格式无效")
+		}
+		if q.GVR.Group == "" && q.GVR.Resource == "secrets" {
+			return fmt.Errorf("kubernetes_query 不允许读取 Secret")
+		}
 	}
 	if q.Action != "list" && q.Action != "get" {
 		return fmt.Errorf("action 仅支持 list 或 get")
@@ -85,16 +108,8 @@ func (q *QueryRequest) NormalizeAndValidate() error {
 	if q.Name != "" && len(validation.IsDNS1123Subdomain(q.Name)) != 0 {
 		return fmt.Errorf("name 格式无效")
 	}
-	if !resource.namespaced && (q.Namespace != "" || q.AllNamespaces) {
-		return fmt.Errorf("%s 是集群级资源，不能指定 namespace 或 all_namespaces", q.Kind)
-	}
-	if resource.namespaced {
-		if q.AllNamespaces && (q.Namespace != "" || q.Action != "list") {
-			return fmt.Errorf("all_namespaces 仅用于 list，且不能同时指定 namespace")
-		}
-		if q.Namespace == "" && !q.AllNamespaces {
-			return fmt.Errorf("%s 需要明确 namespace；跨命名空间列表查询请指定 all_namespaces=true", q.Kind)
-		}
+	if q.AllNamespaces && (q.Namespace != "" || q.Action != "list") {
+		return fmt.Errorf("all_namespaces 仅用于 list，且不能同时指定 namespace")
 	}
 	if q.Action == "get" {
 		if q.Name == "" {
@@ -121,7 +136,7 @@ func (q *QueryRequest) NormalizeAndValidate() error {
 }
 
 func newQueryResult(q QueryRequest, source string) QueryResult {
-	return QueryResult{ClusterID: q.ClusterID, Action: q.Action, Kind: q.Kind, Namespace: q.Namespace, AllNamespaces: q.AllNamespaces, Source: source, Items: []ResourceSummary{}}
+	return QueryResult{ClusterID: q.ClusterID, Action: q.Action, Kind: q.Kind, GVR: *q.GVR, Namespace: q.Namespace, AllNamespaces: q.AllNamespaces, Source: source, Items: []ResourceSummary{}}
 }
 
 func (c *GatewayClient) Query(ctx context.Context, q QueryRequest) (QueryResult, error) {
@@ -142,34 +157,22 @@ func (c *GatewayClient) Query(ctx context.Context, q QueryRequest) (QueryResult,
 	if err != nil {
 		return QueryResult{}, err
 	}
-	resource := queryResources[q.Kind]
-	gv := resource.groupVersion
-	discoveryPath := "/api/" + gv.Version
-	if gv.Group != "" {
-		discoveryPath = "/apis/" + gv.String()
-	}
-	// 仅发现当前资源所属的 API 版本；使用带 context 的请求保证取消和总超时生效。
-	var discovered metav1.APIResourceList
-	if err := core.RESTClient().Get().AbsPath(discoveryPath).Do(ctx).Into(&discovered); err != nil {
-		return QueryResult{}, c.queryError("发现 Kubernetes 资源", err)
-	}
-	if discovered.GroupVersion != gv.String() {
-		return QueryResult{}, fmt.Errorf("资源发现返回的 API 版本与请求不一致")
-	}
-	mapper := restmapper.NewDiscoveryRESTMapper([]*restmapper.APIGroupResources{{
-		Group:              metav1.APIGroup{Name: gv.Group, Versions: []metav1.GroupVersionForDiscovery{{GroupVersion: gv.String(), Version: gv.Version}}},
-		VersionedResources: map[string][]metav1.APIResource{gv.Version: discovered.APIResources},
-	}})
-	mapping, err := mapper.RESTMapping(gv.WithKind(q.Kind).GroupKind(), gv.Version)
+	resource, err := c.resolveResource(ctx, core, q)
 	if err != nil {
-		return QueryResult{}, fmt.Errorf("目标集群不支持 %s %s: %w", gv, q.Kind, err)
+		return QueryResult{}, err
 	}
-	if (mapping.Scope.Name() == meta.RESTScopeNameNamespace) != resource.namespaced {
-		return QueryResult{}, fmt.Errorf("资源发现的作用域与 %s 不一致", q.Kind)
+	if !resource.Namespaced && (q.Namespace != "" || q.AllNamespaces) {
+		return QueryResult{}, fmt.Errorf("%s 是集群级资源，不能指定 namespace 或 all_namespaces", resource.Kind)
 	}
-	var endpoint dynamic.ResourceInterface = client.Resource(mapping.Resource)
-	if resource.namespaced {
-		endpoint = client.Resource(mapping.Resource).Namespace(q.Namespace)
+	if resource.Namespaced && q.Namespace == "" && !q.AllNamespaces {
+		return QueryResult{}, fmt.Errorf("%s 需要明确 namespace；跨命名空间列表查询请指定 all_namespaces=true", resource.Kind)
+	}
+	q.Kind = resource.Kind
+	q.GVR = &ResourceRef{Group: resource.GVR.Group, Version: resource.GVR.Version, Resource: resource.GVR.Resource}
+	gv := resource.GVR.GroupVersion()
+	var endpoint dynamic.ResourceInterface = client.Resource(resource.GVR)
+	if resource.Namespaced {
+		endpoint = client.Resource(resource.GVR).Namespace(q.Namespace)
 	}
 	result := newQueryResult(q, "kubernetes")
 	var items []unstructured.Unstructured
@@ -210,8 +213,8 @@ func (c *GatewayClient) Query(ctx context.Context, q QueryRequest) (QueryResult,
 	for _, item := range items {
 		if item.GetName() == "" || item.GetKind() != q.Kind || item.GetAPIVersion() != gv.String() ||
 			(q.Name != "" && item.GetName() != q.Name) ||
-			(resource.namespaced && item.GetNamespace() == "") ||
-			(!resource.namespaced && item.GetNamespace() != "") ||
+			(resource.Namespaced && item.GetNamespace() == "") ||
+			(!resource.Namespaced && item.GetNamespace() != "") ||
 			(q.Namespace != "" && item.GetNamespace() != q.Namespace) {
 			return QueryResult{}, fmt.Errorf("Kubernetes 返回的资源身份与请求不一致或字段缺失")
 		}

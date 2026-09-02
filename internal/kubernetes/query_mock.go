@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -19,6 +20,41 @@ func (c *MockClient) Query(ctx context.Context, q QueryRequest) (QueryResult, er
 	if err != nil {
 		return QueryResult{}, err
 	}
+	resources := map[string]discoveredResource{}
+	for kind, resource := range queryResources {
+		gvr := resource.groupVersion.WithResource(strings.ToLower(kind) + "s")
+		if kind == "Namespace" {
+			gvr.Resource = "namespaces"
+		}
+		resources[kind] = discoveredResource{GVR: gvr, Kind: kind, Namespaced: resource.namespaced, Verbs: map[string]bool{"list": true, "get": true}}
+	}
+	resources["CronJob"] = discoveredResource{GVR: schema.GroupVersionResource{Group: "batch", Version: "v1", Resource: "cronjobs"}, Kind: "CronJob", Namespaced: true, Verbs: map[string]bool{"list": true, "get": true}}
+	resources["Widget"] = discoveredResource{GVR: schema.GroupVersionResource{Group: "example.io", Version: "v1", Resource: "widgets"}, Kind: "Widget", Namespaced: true, Verbs: map[string]bool{"list": true, "get": true}}
+	var resource discoveredResource
+	if q.GVR != nil {
+		for _, candidate := range resources {
+			if candidate.GVR == (schema.GroupVersionResource{Group: q.GVR.Group, Version: q.GVR.Version, Resource: q.GVR.Resource}) {
+				resource = candidate
+				break
+			}
+		}
+	} else {
+		resource = resources[q.Kind]
+	}
+	if resource.Kind == "" {
+		return QueryResult{}, fmt.Errorf("Mock 中不存在请求的 Kubernetes 资源")
+	}
+	if _, err := validateDiscoveredResource(resource, q); err != nil {
+		return QueryResult{}, err
+	}
+	if !resource.Namespaced && (q.Namespace != "" || q.AllNamespaces) {
+		return QueryResult{}, fmt.Errorf("%s 是集群级资源，不能指定 namespace 或 all_namespaces", resource.Kind)
+	}
+	if resource.Namespaced && q.Namespace == "" && !q.AllNamespaces {
+		return QueryResult{}, fmt.Errorf("%s 需要明确 namespace；跨命名空间列表查询请指定 all_namespaces=true", resource.Kind)
+	}
+	q.Kind = resource.Kind
+	q.GVR = &ResourceRef{Group: resource.GVR.Group, Version: resource.GVR.Version, Resource: resource.GVR.Resource}
 	result := newQueryResult(q, "mock")
 	var objects []unstructured.Unstructured
 	add := func(name, namespace, body string) {
@@ -29,7 +65,7 @@ func (c *MockClient) Query(ctx context.Context, q QueryRequest) (QueryResult, er
 		}
 		item := unstructured.Unstructured{Object: object}
 		item.SetKind(q.Kind)
-		item.SetAPIVersion(queryResources[q.Kind].groupVersion.String())
+		item.SetAPIVersion(resource.GVR.GroupVersion().String())
 		item.SetName(name)
 		item.SetNamespace(namespace)
 		objects = append(objects, item)
@@ -55,6 +91,10 @@ func (c *MockClient) Query(ctx context.Context, q QueryRequest) (QueryResult, er
 		add("web", "production", `{"spec":{"replicas":1},"status":{"readyReplicas":0,"availableReplicas":0,"updatedReplicas":1}}`)
 	case "Event":
 		add("web-1.failed-scheduling", "production", `{"type":"Warning","reason":"FailedScheduling","message":"Mock: insufficient CPU","count":1,"involvedObject":{"kind":"Pod","namespace":"production","name":"web-1"}}`)
+	case "CronJob":
+		add("cleanup", "default", `{"status":{"lastScheduleTime":"2026-01-01T00:00:00Z"}}`)
+	case "Widget":
+		add("example", "default", `{"status":{"phase":"Ready","conditions":[{"type":"Available","status":"True","reason":"Reconciled"}]}}`)
 	}
 	matches := []ResourceSummary{}
 	for _, item := range objects {
@@ -72,7 +112,7 @@ func (c *MockClient) Query(ctx context.Context, q QueryRequest) (QueryResult, er
 	}
 	if q.Action == "get" {
 		if len(matches) == 0 {
-			return QueryResult{}, apierrors.NewNotFound(schema.GroupResource{Group: queryResources[q.Kind].groupVersion.Group, Resource: q.Kind}, q.Name)
+			return QueryResult{}, apierrors.NewNotFound(resource.GVR.GroupResource(), q.Name)
 		}
 		result.Items = matches
 	} else {

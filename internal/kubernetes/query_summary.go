@@ -121,6 +121,35 @@ func summarizeResource(item unstructured.Unstructured, token string) (ResourceSu
 			d["last_observed_time"] = event.Series.LastObservedTime
 		}
 		d["involved_object"] = map[string]any{"kind": event.InvolvedObject.Kind, "namespace": event.InvolvedObject.Namespace, "name": event.InvolvedObject.Name}
+	default:
+		// CRD 没有编译期 Go 类型，只返回常见状态标量和条件，避免把完整 spec/status 塞入模型上下文。
+		if status, ok := item.Object["status"].(map[string]any); ok {
+			for _, key := range []string{"phase", "state", "ready", "replicas", "readyReplicas", "availableReplicas", "updatedReplicas", "observedGeneration"} {
+				if value, exists := status[key]; exists {
+					switch value.(type) {
+					case string, bool, int64, float64, int, int32:
+						d[key] = value
+					}
+				}
+			}
+			if rawConditions, ok := status["conditions"].([]any); ok {
+				conditions := make([]map[string]any, 0, min(len(rawConditions), 20))
+				for _, raw := range rawConditions {
+					condition, ok := raw.(map[string]any)
+					if !ok || len(conditions) == 20 {
+						continue
+					}
+					selected := map[string]any{}
+					for _, key := range []string{"type", "status", "reason", "message"} {
+						if value, ok := condition[key].(string); ok {
+							selected[key] = cleanQueryText(value, token)
+						}
+					}
+					conditions = append(conditions, selected)
+				}
+				d["conditions"] = conditions
+			}
+		}
 	}
 	return result, nil
 }

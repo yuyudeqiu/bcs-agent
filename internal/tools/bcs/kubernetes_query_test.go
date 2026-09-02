@@ -30,12 +30,16 @@ func TestKubernetesQueryTool(t *testing.T) {
 	if err != nil || !json.Valid([]byte(output)) || client.request.Namespace != "default" || client.request.Limit != 50 || client.request.ClusterID != "BCS-K8S-10001" {
 		t.Fatalf("result=%s request=%+v err=%v", output, client.request, err)
 	}
-	for _, args := range []string{`{`, `null`, `[]`, `{}`, `{"cluster_id":1}`, `{"cluster_id":"BCS-K8S-10001","action":"delete","kind":"Pod","namespace":"default"}`, `{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Pod"}`, `{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Node","namespace":"default"}`, `{"cluster_id":"BCS-K8S-10001","action":"get","kind":"Node"}`, `{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Node","approved":true}`, `{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Node"} {}`} {
+	output, err = tool.InvokableRun(context.Background(), `{"cluster_id":"BCS-K8S-10001","action":"list","gvr":{"group":"example.io","version":"v1","resource":"widgets"},"namespace":"default"}`)
+	if err != nil || client.request.Kind != "" || client.request.GVR == nil || client.request.GVR.Resource != "widgets" {
+		t.Fatalf("explicit GVR result=%s request=%+v err=%v", output, client.request, err)
+	}
+	for _, args := range []string{`{`, `null`, `[]`, `{}`, `{"cluster_id":1}`, `{"cluster_id":"BCS-K8S-10001","action":"delete","kind":"Pod","namespace":"default"}`, `{"cluster_id":"BCS-K8S-10001","action":"get","kind":"Node"}`, `{"cluster_id":"BCS-K8S-10001","action":"list","gvr":{"group":"example.io","version":"v1"},"namespace":"default"}`, `{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Node","approved":true}`, `{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Node"} {}`} {
 		if _, err := tool.InvokableRun(context.Background(), args); err == nil {
 			t.Errorf("accepted: %s", args)
 		}
 	}
-	if client.calls != 1 {
+	if client.calls != 2 {
 		t.Fatalf("invalid arguments reached client: %d", client.calls)
 	}
 	client.err = errors.New("test error")
