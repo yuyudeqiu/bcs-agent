@@ -15,6 +15,7 @@ import (
 	"github.com/yuyudeqiu/bcs-agent/internal/chat"
 	"github.com/yuyudeqiu/bcs-agent/internal/cli"
 	"github.com/yuyudeqiu/bcs-agent/internal/config"
+	kubeclient "github.com/yuyudeqiu/bcs-agent/internal/kubernetes"
 	bcstools "github.com/yuyudeqiu/bcs-agent/internal/tools/bcs"
 )
 
@@ -32,10 +33,12 @@ func main() {
 
 	// 未配置 BCS_BASE_URL / BCS_API_TOKEN 时使用内置 Mock，配置后走真实 API。
 	bcsClient := bcs.Client(bcs.NewMockClient())
+	kubernetesClient := kubeclient.Client(kubeclient.NewMockClient())
 	if cfg.BCS.BaseURL != "" && cfg.BCS.APIToken != "" {
 		bcsClient = bcs.NewHTTPClient(cfg.BCS)
+		kubernetesClient = kubeclient.NewGatewayClient(cfg.BCS)
 	}
-	agentTools := bcstools.NewTools(bcsClient)
+	agentTools := bcstools.NewTools(bcsClient, kubernetesClient)
 
 	chatAgent, err := agent.New(ctx, cfg.OpenAI, agentTools)
 	if err != nil {

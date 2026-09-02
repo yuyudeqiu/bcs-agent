@@ -60,12 +60,44 @@ func TestListClustersToolFromProjects(t *testing.T) {
 	if string(fields[0]["kubernetes_version"]) != `"v1.23.17"` || string(fields[0]["environment"]) != `"prod"` {
 		t.Fatalf("tool output missing version or environment: %s", output)
 	}
-	for _, args := range []string{`{`, `{}`, `{"project_id":""}`, `{"project_id":"  "}`} {
+	for _, args := range []string{`{`, `{"project_id":123}`, `{"project_id":[]}`} {
 		if _, err := clustersTool.InvokableRun(context.Background(), args); err == nil {
 			t.Errorf("expected invalid arguments error for %q", args)
 		}
 	}
 	if clusterCalls != 1 {
 		t.Errorf("cluster calls = %d, want 1", clusterCalls)
+	}
+}
+
+func TestListClustersToolWithoutProject(t *testing.T) {
+	for _, args := range []string{`{}`, `{"project_id":""}`, `{"project_id":"  "}`} {
+		t.Run(args, func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if r.Method != http.MethodGet || r.RequestURI != "/bcsapi/v4/clustermanager/v1/cluster" {
+					t.Errorf("unexpected request: %s %s", r.Method, r.RequestURI)
+				}
+				_, _ = w.Write([]byte(`{"code":0,"data":[
+					{"clusterID":"BCS-K8S-10001","clusterName":"first","projectID":"p1","status":"RUNNING"},
+					{"clusterID":"BCS-K8S-10002","clusterName":"second","projectID":"p2","status":"RUNNING"}
+				]}`))
+			}))
+			defer server.Close()
+			client := bcsclient.NewHTTPClient(config.BCSConfig{BaseURL: server.URL})
+			tool := &ListClustersTool{client: client}
+			output, err := tool.InvokableRun(context.Background(), args)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var clusters []bcsclient.Cluster
+			if err := json.Unmarshal([]byte(output), &clusters); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 || len(clusters) != 2 || clusters[0].ID != "BCS-K8S-10001" || clusters[1].ID != "BCS-K8S-10002" {
+				t.Fatalf("calls = %d, clusters = %#v", calls, clusters)
+			}
+		})
 	}
 }

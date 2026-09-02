@@ -1,6 +1,6 @@
 # BCS Agent
 
-面向 Blueking Container Service 的终端运维 Agent。当前版本提供流式多轮终端对话和 BCS 查询工具（项目列表、按项目查询集群列表已接入真实 API；集群详情在真实模式下尚未接入，Mock 模式提供示例数据），模型生成的文本会实时输出。
+面向 Blueking Container Service 的终端运维 Agent。当前版本提供流式多轮终端对话和 BCS 查询工具（项目列表、集群列表已接入真实 API，集群列表支持可选的项目 ID 过滤；集群详情在真实模式下尚未接入，Mock 模式提供示例数据），模型生成的文本会实时输出。
 
 ## 运行
 
@@ -30,6 +30,8 @@ export BCS_API_TOKEN="..."
 go run ./cmd/bcs-agent
 ```
 
+查询节点数量可输入“查看某个集群的节点数量”，Agent 会调用 `get_cluster_node_summary`，返回节点总数、Ready 数和非 Ready 数（含 Unknown 或缺失 Ready 条件）。真实模式复用 BCS 配置，经 `/clusters/{cluster_id}/api/v1/nodes` 查询；Token 需要有目标集群的节点列表读取权限。未配置 BCS 时返回标记为 `source=mock` 的示例统计。
+
 终端命令：
 
 - `/clear`：清空当前对话历史
@@ -43,5 +45,6 @@ go run ./cmd/bcs-agent
 - `internal/cli`：终端交互入口
 - `internal/tools/bcs`：提供给模型调用的 BCS 工具
 - `internal/bcs`：BCS Client 接口、数据类型、Mock 与真实 HTTP 实现
+- `internal/kubernetes`：client-go 网关客户端与节点统计
 
 后续接入 Web 时，Web Handler 将复用 `internal/chat`、`internal/agent` 和工具层。

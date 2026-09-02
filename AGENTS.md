@@ -5,7 +5,7 @@
 BCS Agent 是面向 Blueking Container Service 的运维助手，当前使用 Go + Eino，提供终端流式对话和 BCS 查询工具。
 近期优先补齐项目、集群的基础接口，再逐步通过 BCS 网关访问 Kubernetes API，增加集群操作能力。
 
-项目处于早期阶段，架构和产品形态仍会调整。以下目录职责描述当前结构，不要求长期固定；`client-go`、工具归并方式及 YAML 配置等方案尚未确定，不提前实现。
+项目处于早期阶段，架构和产品形态仍会调整。以下目录职责描述当前结构，不要求长期固定；工具归并方式及 YAML 配置等方案尚未确定，不提前实现。Kubernetes API 访问使用 `client-go`，经 BCS 网关转发。
 
 ## 协作方式
 
@@ -25,6 +25,7 @@ BCS Agent 是面向 Blueking Container Service 的运维助手，当前使用 Go
 - `internal/cli`：终端输入输出。
 - `internal/tools/bcs`：工具描述、参数校验、调用客户端和结果序列化。
 - `internal/bcs`：BCS Client 接口、数据类型、Mock 和真实 API 通信。
+- `internal/kubernetes`：通过 BCS 网关访问目标集群的 Kubernetes API，以及对应的 Mock。
 
 新增 API 通信逻辑放在客户端层，避免散落到 CLI、会话或工具适配中。工具粒度可以演进，不把“一种操作或一个 Kubernetes kind 对应一个工具”作为固定规范。
 

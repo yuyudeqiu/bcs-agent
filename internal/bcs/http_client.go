@@ -95,14 +95,15 @@ func (c *HTTPClient) ListProjects(ctx context.Context) ([]Project, error) {
 	return page.Results, nil
 }
 
-// ListClusters 按项目查询集群；接口也可能返回共享集群。
+// ListClusters 查询集群；projectID 为空时不按项目过滤，接口也可能返回共享集群。
 func (c *HTTPClient) ListClusters(ctx context.Context, projectID string) ([]Cluster, error) {
-	if strings.TrimSpace(projectID) == "" {
-		return nil, fmt.Errorf("project_id 不能为空")
+	path := "/bcsapi/v4/clustermanager/v1/cluster"
+	if projectID = strings.TrimSpace(projectID); projectID != "" {
+		query := url.Values{"projectID": {projectID}}
+		path += "?" + query.Encode()
 	}
-	query := url.Values{"projectID": {projectID}}
 	// v1 接口直接返回集群数组，当前上游实现不使用 offset/limit。
-	data, err := c.doGet(ctx, "/bcsapi/v4/clustermanager/v1/cluster?"+query.Encode())
+	data, err := c.doGet(ctx, path)
 	if err != nil {
 		return nil, err
 	}

@@ -150,18 +150,13 @@ func TestHTTPClientListClustersResponses(t *testing.T) {
 	}
 }
 
-func TestHTTPClientListClustersInvalidInput(t *testing.T) {
+func TestHTTPClientListClustersCanceled(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		t.Error("invalid input should not reach the server")
+		t.Error("canceled request should not reach the server")
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 	client := NewHTTPClient(config.BCSConfig{BaseURL: server.URL})
-	for _, projectID := range []string{"", " \t\n"} {
-		if _, err := client.ListClusters(context.Background(), projectID); err == nil {
-			t.Errorf("ListClusters(%q) should fail", projectID)
-		}
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := client.ListClusters(ctx, "p1"); !errors.Is(err, context.Canceled) {
