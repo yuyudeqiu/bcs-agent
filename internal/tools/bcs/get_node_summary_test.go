@@ -11,6 +11,7 @@ import (
 )
 
 type nodeSummaryClient struct {
+	kubeclient.Client
 	id    string
 	calls int
 	err   error

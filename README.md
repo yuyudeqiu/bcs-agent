@@ -32,6 +32,8 @@ go run ./cmd/bcs-agent
 
 查询节点数量可输入“查看某个集群的节点数量”，Agent 会调用 `get_cluster_node_summary`，返回节点总数、Ready 数和非 Ready 数（含 Unknown 或缺失 Ready 条件）。真实模式复用 BCS 配置，经 `/clusters/{cluster_id}/api/v1/nodes` 查询；Token 需要有目标集群的节点列表读取权限。未配置 BCS 时返回标记为 `source=mock` 的示例统计。
 
+资源查询可输入“查看某个集群 default 命名空间的 Pod”或“查看某个集群的 Namespace”。`kubernetes_query` 支持 Pod、Namespace、Deployment、Node、Event 的 `list/get`，返回资源摘要；指定资源时使用 `name`，跨命名空间列表需明确 `all_namespaces=true`。列表默认每页 50 条（最多 100），`count` 是本页数量，`has_more` 和 `continue` 表示是否还有下一页。真实模式还需要读取对应 API 版本的资源发现接口及目标资源的权限。未配置 BCS 时使用标记为 `source=mock` 的示例数据。
+
 终端命令：
 
 - `/clear`：清空当前对话历史
@@ -45,6 +47,6 @@ go run ./cmd/bcs-agent
 - `internal/cli`：终端交互入口
 - `internal/tools/bcs`：提供给模型调用的 BCS 工具
 - `internal/bcs`：BCS Client 接口、数据类型、Mock 与真实 HTTP 实现
-- `internal/kubernetes`：client-go 网关客户端与节点统计
+- `internal/kubernetes`：client-go 网关客户端、资源查询与节点统计
 
 后续接入 Web 时，Web Handler 将复用 `internal/chat`、`internal/agent` 和工具层。

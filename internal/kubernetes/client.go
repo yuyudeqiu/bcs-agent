@@ -26,6 +26,7 @@ type NodeSummary struct {
 
 type Client interface {
 	GetNodeSummary(ctx context.Context, clusterID string) (NodeSummary, error)
+	Query(ctx context.Context, request QueryRequest) (QueryResult, error)
 }
 
 // GatewayClient 通过 BCS /clusters/{clusterID} 代理访问 Kubernetes 原生 API。
@@ -47,6 +48,18 @@ func validateClusterID(clusterID string) error {
 }
 
 func (c *GatewayClient) coreClient(clusterID string) (*coreclient.CoreV1Client, error) {
+	cfg, err := c.restConfig(clusterID)
+	if err != nil {
+		return nil, err
+	}
+	client, err := coreclient.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("创建 Kubernetes 客户端: %w", err)
+	}
+	return client, nil
+}
+
+func (c *GatewayClient) restConfig(clusterID string) (*rest.Config, error) {
 	if err := validateClusterID(clusterID); err != nil {
 		return nil, err
 	}
@@ -58,7 +71,7 @@ func (c *GatewayClient) coreClient(clusterID string) (*coreclient.CoreV1Client, 
 	if strings.TrimSpace(c.cfg.APIToken) == "" {
 		return nil, fmt.Errorf("缺少 BCS_API_TOKEN")
 	}
-	client, err := coreclient.NewForConfig(&rest.Config{
+	return &rest.Config{
 		Host:        base.JoinPath("clusters", clusterID).String(),
 		BearerToken: c.cfg.APIToken,
 		Timeout:     15 * time.Second,
@@ -69,11 +82,7 @@ func (c *GatewayClient) coreClient(clusterID string) (*coreclient.CoreV1Client, 
 			AcceptContentTypes: "application/json",
 			ContentType:        "application/json",
 		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("创建 Kubernetes 客户端: %w", err)
-	}
-	return client, nil
+	}, nil
 }
 
 func (c *GatewayClient) GetNodeSummary(ctx context.Context, clusterID string) (NodeSummary, error) {
