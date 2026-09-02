@@ -13,8 +13,15 @@ type OpenAIConfig struct {
 	ReasoningEffort string
 }
 
+type BCSConfig struct {
+	BaseURL            string
+	APIToken           string
+	InsecureSkipVerify bool
+}
+
 type Config struct {
 	OpenAI OpenAIConfig
+	BCS    BCSConfig
 }
 
 func Load() (Config, error) {
@@ -25,6 +32,11 @@ func Load() (Config, error) {
 			BaseURL:         os.Getenv("OPENAI_BASE_URL"),
 			ByAzure:         os.Getenv("OPENAI_BY_AZURE") == "true",
 			ReasoningEffort: os.Getenv("OPENAI_REASONING_EFFORT"),
+		},
+		BCS: BCSConfig{
+			BaseURL:            os.Getenv("BCS_BASE_URL"),
+			APIToken:           os.Getenv("BCS_API_TOKEN"),
+			InsecureSkipVerify: os.Getenv("BCS_INSECURE_SKIP_VERIFY") != "false",
 		},
 	}
 

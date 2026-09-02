@@ -8,6 +8,7 @@ import (
 
 func NewTools(client bcsclient.Client) []tool.BaseTool {
 	return []tool.BaseTool{
+		&ListProjectsTool{client: client},
 		&ListClustersTool{client: client},
 		&GetClusterDetailTool{client: client},
 	}

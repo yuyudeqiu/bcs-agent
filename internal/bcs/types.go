@@ -14,3 +14,18 @@ type ClusterDetail struct {
 	Region          string `json:"region"`
 	DeploymentCount int    `json:"deployment_count"`
 }
+
+// Project 是 BCS 项目，字段名与真实 bcsproject API 返回一致。
+type Project struct {
+	ProjectID    string `json:"projectID"`
+	ProjectCode  string `json:"projectCode"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Kind         string `json:"kind"`
+	BusinessID   string `json:"businessID"`
+	BusinessName string `json:"businessName"`
+	Creator      string `json:"creator"`
+	CreateTime   string `json:"createTime"`
+	IsOffline    bool   `json:"isOffline"`
+	UseBKRes     bool   `json:"useBKRes"`
+}

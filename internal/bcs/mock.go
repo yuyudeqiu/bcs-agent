@@ -11,6 +11,13 @@ func NewMockClient() *MockClient {
 	return &MockClient{}
 }
 
+func (c *MockClient) ListProjects(_ context.Context) ([]Project, error) {
+	return []Project{
+		{ProjectID: "proj-001", ProjectCode: "bcs-prod", Name: "生产项目", Creator: "admin"},
+		{ProjectID: "proj-002", ProjectCode: "bcs-staging", Name: "预发布项目", Creator: "admin"},
+	}, nil
+}
+
 func (c *MockClient) ListClusters(_ context.Context, _ string) ([]Cluster, error) {
 	return []Cluster{
 		{ID: "BCS-K8S-40888", Name: "prod-bj-cluster", Status: "Running", NodeCount: 12},
