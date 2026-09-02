@@ -1,10 +1,12 @@
 package bcs
 
 type Cluster struct {
-	ID        string `json:"cluster_id"`
-	Name      string `json:"cluster_name"`
-	Status    string `json:"status"`
-	NodeCount int    `json:"node_count"`
+	ID          string `json:"cluster_id"`
+	Name        string `json:"cluster_name"`
+	Status      string `json:"status"`
+	Kubernetes  string `json:"kubernetes_version,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	NodeCount   int    `json:"node_count,omitempty"` // 集群列表 API 未提供节点数时不输出。
 }
 
 type ClusterDetail struct {

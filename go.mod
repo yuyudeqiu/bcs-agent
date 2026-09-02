@@ -5,6 +5,7 @@ go 1.25.12
 require (
 	github.com/cloudwego/eino v0.9.19
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
+	github.com/joho/godotenv v1.5.1
 )
 
 require (
@@ -20,7 +21,6 @@ require (
 	github.com/evanphx/json-patch v0.5.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
@@ -18,11 +19,11 @@ type ListClustersTool struct {
 func (t *ListClustersTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "list_clusters",
-		Desc: "列出指定项目下的所有 Kubernetes 集群，返回集群 ID、名称、状态和节点数",
+		Desc: "按项目 ID 查询集群列表，返回集群 ID、名称、状态、BCS 记录的 Kubernetes 版本和环境，接口也可能返回共享集群。版本和环境缺失时表示未知，不根据名称推断环境。未返回节点数时不能视为 0。项目 ID 未确定时先调用 list_projects。",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"project_id": {
 				Type:     schema.String,
-				Desc:     "项目 ID",
+				Desc:     "list_projects 返回的 projectID，不是项目名称或 projectCode",
 				Required: true,
 			},
 		}),
@@ -36,7 +37,7 @@ func (t *ListClustersTool) InvokableRun(ctx context.Context, arguments string, _
 	if err := json.Unmarshal([]byte(arguments), &params); err != nil {
 		return "", fmt.Errorf("解析 list_clusters 参数: %w", err)
 	}
-	if params.ProjectID == "" {
+	if strings.TrimSpace(params.ProjectID) == "" {
 		return "", fmt.Errorf("project_id 不能为空")
 	}
 

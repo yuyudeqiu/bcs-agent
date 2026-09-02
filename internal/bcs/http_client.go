@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -94,9 +95,44 @@ func (c *HTTPClient) ListProjects(ctx context.Context) ([]Project, error) {
 	return page.Results, nil
 }
 
-// ListClusters 待接入。
-func (c *HTTPClient) ListClusters(_ context.Context, _ string) ([]Cluster, error) {
-	return nil, fmt.Errorf("BCS 集群列表 API 待接入")
+// ListClusters 按项目查询集群；接口也可能返回共享集群。
+func (c *HTTPClient) ListClusters(ctx context.Context, projectID string) ([]Cluster, error) {
+	if strings.TrimSpace(projectID) == "" {
+		return nil, fmt.Errorf("project_id 不能为空")
+	}
+	query := url.Values{"projectID": {projectID}}
+	// v1 接口直接返回集群数组，当前上游实现不使用 offset/limit。
+	data, err := c.doGet(ctx, "/bcsapi/v4/clustermanager/v1/cluster?"+query.Encode())
+	if err != nil {
+		return nil, err
+	}
+	// 仅提取列表所需字段，保持工具输出格式，并避免透传 kubeConfig 等敏感数据。
+	var items []struct {
+		ID            string `json:"clusterID"`
+		Name          string `json:"clusterName"`
+		Status        string `json:"status"`
+		Environment   string `json:"environment"`
+		BasicSettings struct {
+			Version string `json:"version"`
+		} `json:"clusterBasicSettings"`
+	}
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, fmt.Errorf("解析集群列表: %w", err)
+	}
+	clusters := make([]Cluster, 0, len(items))
+	for _, item := range items {
+		if item.ID == "" {
+			return nil, fmt.Errorf("解析集群列表: 缺少 clusterID")
+		}
+		clusters = append(clusters, Cluster{
+			ID:          item.ID,
+			Name:        item.Name,
+			Status:      item.Status,
+			Kubernetes:  item.BasicSettings.Version,
+			Environment: item.Environment,
+		})
+	}
+	return clusters, nil
 }
 
 // GetCluster 待接入。

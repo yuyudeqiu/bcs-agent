@@ -1,6 +1,6 @@
 # BCS Agent
 
-面向 Blueking Container Service 的终端运维 Agent。当前版本提供流式多轮终端对话和 BCS 查询工具（项目列表已接入真实 API，集群查询仍为 Mock），模型生成的文本会实时输出。
+面向 Blueking Container Service 的终端运维 Agent。当前版本提供流式多轮终端对话和 BCS 查询工具（项目列表、按项目查询集群列表已接入真实 API；集群详情在真实模式下尚未接入，Mock 模式提供示例数据），模型生成的文本会实时输出。
 
 ## 运行
 
