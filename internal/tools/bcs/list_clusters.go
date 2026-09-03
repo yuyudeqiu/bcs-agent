@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	bcsclient "github.com/yuyudeqiu/bcs-agent/internal/bcs"
+	"github.com/yuyudeqiu/bcs-agent/internal/utils"
 )
 
 type ListClustersTool struct {
@@ -32,7 +33,7 @@ func (t *ListClustersTool) InvokableRun(ctx context.Context, arguments string, _
 	var params struct {
 		ProjectID string `json:"project_id"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &params); err != nil {
+	if err := utils.DecodeJSONStrict(arguments, &params); err != nil {
 		return "", fmt.Errorf("解析 list_clusters 参数: %w", err)
 	}
 	clusters, err := t.client.ListClusters(ctx, params.ProjectID)

@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	bcsclient "github.com/yuyudeqiu/bcs-agent/internal/bcs"
+	"github.com/yuyudeqiu/bcs-agent/internal/utils"
 )
 
 type GetClusterDetailTool struct {
@@ -33,7 +34,7 @@ func (t *GetClusterDetailTool) InvokableRun(ctx context.Context, arguments strin
 	var params struct {
 		ClusterID string `json:"cluster_id"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &params); err != nil {
+	if err := utils.DecodeJSONStrict(arguments, &params); err != nil {
 		return "", fmt.Errorf("解析 get_cluster_detail 参数: %w", err)
 	}
 	if params.ClusterID == "" {

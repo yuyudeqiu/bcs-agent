@@ -47,7 +47,7 @@ func recoverQueryErrors(next compose.InvokableToolEndpoint) compose.InvokableToo
 			return nil, err
 		}
 		switch input.Name {
-		case "list_projects", "list_clusters", "get_cluster_detail", "get_cluster_node_summary", "kubernetes_query":
+		case "list_projects", "list_clusters", "get_cluster_detail", "kubernetes_query":
 		default:
 			return nil, err
 		}

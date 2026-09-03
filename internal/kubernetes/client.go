@@ -9,24 +9,13 @@ import (
 	"sync"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	coreclient "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 
 	"github.com/yuyudeqiu/bcs-agent/internal/config"
 )
 
-type NodeSummary struct {
-	ClusterID     string `json:"cluster_id"`
-	TotalNodes    int    `json:"total_nodes"`
-	ReadyNodes    int    `json:"ready_nodes"`
-	NotReadyNodes int    `json:"not_ready_nodes"`
-	Source        string `json:"source"`
-}
-
 type Client interface {
-	GetNodeSummary(ctx context.Context, clusterID string) (NodeSummary, error)
 	Query(ctx context.Context, request QueryRequest) (QueryResult, error)
 }
 
@@ -86,48 +75,4 @@ func (c *GatewayClient) restConfig(clusterID string) (*rest.Config, error) {
 			ContentType:        "application/json",
 		},
 	}, nil
-}
-
-func (c *GatewayClient) GetNodeSummary(ctx context.Context, clusterID string) (NodeSummary, error) {
-	client, err := c.coreClient(clusterID)
-	if err != nil {
-		return NodeSummary{}, err
-	}
-	// 限制整个分页查询的耗时，而不只是单个 HTTP 请求。
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-
-	summary := NodeSummary{ClusterID: clusterID, Source: "kubernetes"}
-	options := metav1.ListOptions{Limit: 500}
-	seenTokens := make(map[string]bool)
-	for {
-		page, err := client.Nodes().List(ctx, options)
-		if err != nil {
-			return NodeSummary{}, fmt.Errorf("查询集群 %s 的节点: %w", clusterID, err)
-		}
-		for _, node := range page.Items {
-			summary.TotalNodes++
-			ready := false
-			for _, condition := range node.Status.Conditions {
-				if condition.Type == corev1.NodeReady {
-					ready = condition.Status == corev1.ConditionTrue
-					break
-				}
-			}
-			if ready {
-				summary.ReadyNodes++
-			} else {
-				// False、Unknown 或缺失 Ready 条件都不能计为就绪。
-				summary.NotReadyNodes++
-			}
-		}
-		if page.Continue == "" {
-			return summary, nil
-		}
-		if seenTokens[page.Continue] {
-			return NodeSummary{}, fmt.Errorf("查询节点分页返回重复的 continue 标记，未获取完整列表")
-		}
-		seenTokens[page.Continue] = true
-		options.Continue = page.Continue
-	}
 }

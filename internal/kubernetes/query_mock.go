@@ -16,9 +16,18 @@ func (c *MockClient) Query(ctx context.Context, q QueryRequest) (QueryResult, er
 	if err := q.NormalizeAndValidate(); err != nil {
 		return QueryResult{}, err
 	}
-	nodes, err := c.GetNodeSummary(ctx, q.ClusterID)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return QueryResult{}, err
+	}
+	// 与 BCS Mock 列表中的集群及节点数量一致。
+	clusters := map[string]struct{ totalNodes, readyNodes int }{
+		"BCS-K8S-40888": {12, 12},
+		"BCS-K8S-40889": {5, 5},
+		"BCS-K8S-40890": {3, 2},
+	}
+	nodes, ok := clusters[q.ClusterID]
+	if !ok {
+		return QueryResult{}, fmt.Errorf("Mock 中不存在集群 %s，请先查询 Mock 集群列表", q.ClusterID)
 	}
 	resources := map[string]discoveredResource{}
 	for kind, resource := range queryResources {
@@ -72,9 +81,9 @@ func (c *MockClient) Query(ctx context.Context, q QueryRequest) (QueryResult, er
 	}
 	switch q.Kind {
 	case "Node":
-		for i := 0; i < nodes.TotalNodes; i++ {
+		for i := 0; i < nodes.totalNodes; i++ {
 			ready := "True"
-			if i >= nodes.ReadyNodes {
+			if i >= nodes.readyNodes {
 				ready = "False"
 			}
 			add(fmt.Sprintf("worker-%02d", i+1), "", fmt.Sprintf(`{"status":{"nodeInfo":{"kubeletVersion":"v1.28.0"},"conditions":[{"type":"Ready","status":%q}]}}`, ready))
