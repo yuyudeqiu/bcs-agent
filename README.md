@@ -36,6 +36,8 @@ go run ./cmd/bcs-agent
 
 查询默认使用 `output: "summary"`。需要 CR 的具体配置或同步状态时，Agent 可自行对指定名称执行 `get` 并显式传 `output: "full"`；完整资源对象位于 `items[].resource`，包含 `spec`、`status` 等原有字段。常见凭证字段、敏感环境变量及 last-applied annotation 会脱敏，并标记 `redacted: true`。完整资源超过 64 KiB 时明确报错，不返回截断内容；该模式仅对本次单资源查询生效。
 
+日志排障使用 `kubernetes_logs`，例如“查看这个集群 default 下 web-0 的最近 100 行日志”。必填 `cluster_id`、`namespace`、`pod`；单容器可省略 `container`，多容器需明确选择（包括 init 和临时容器）。`tail_lines` 默认 200、范围 1–1000；可用正整数 `since_seconds` 限定最近多少秒，`previous` 默认 false，设为 true 读取上一次容器实例日志。结果始终带时间戳，仅返回一次快照；整个 JSON 输出最多 32 KiB，额外裁剪标记 `truncated=true`，不代表全部历史，也不支持 follow 或日志分页。已知网关 Token、常见凭证模式和 PEM 私钥会脱敏并标记 `redacted`，不保证识别任意业务敏感内容。真实模式通过 BCS 网关访问 Pod 和 `pods/log`，需要两者的读取权限；Mock 提供 `default/web-0` 的示例日志，不模拟历史日志。
+
 终端命令：
 
 - `/clear`：清空当前对话历史

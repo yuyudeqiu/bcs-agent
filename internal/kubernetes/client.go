@@ -17,6 +17,7 @@ import (
 
 type Client interface {
 	Query(ctx context.Context, request QueryRequest) (QueryResult, error)
+	Logs(ctx context.Context, request LogsRequest) (LogsResult, error)
 }
 
 // GatewayClient 通过 BCS /clusters/{clusterID} 代理访问 Kubernetes 原生 API。

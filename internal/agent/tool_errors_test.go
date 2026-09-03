@@ -98,6 +98,7 @@ func (t *recoveryTool) InvokableRun(_ context.Context, args string, _ ...tool.Op
 }
 
 type recoveryModel struct {
+	toolName                                    string
 	step                                        int
 	sawFailure, sawParallelSuccess, sawRecovery bool
 }
@@ -109,7 +110,7 @@ func (m *recoveryModel) Generate(_ context.Context, messages []*schema.Message, 
 	m.step++
 	if m.step == 1 {
 		return schema.AssistantMessage("", []schema.ToolCall{
-			{ID: "bad", Type: "function", Function: schema.FunctionCall{Name: "kubernetes_query", Arguments: `{"name":"missing"}`}},
+			{ID: "bad", Type: "function", Function: schema.FunctionCall{Name: m.toolName, Arguments: `{"name":"missing"}`}},
 			{ID: "parallel", Type: "function", Function: schema.FunctionCall{Name: "list_clusters", Arguments: `{}`}},
 		}), nil
 	}
@@ -134,7 +135,7 @@ func (m *recoveryModel) Generate(_ context.Context, messages []*schema.Message, 
 		if !m.sawFailure || !m.sawParallelSuccess {
 			return nil, errors.New("model did not receive both tool results")
 		}
-		return schema.AssistantMessage("核对目标后重新查询。", []schema.ToolCall{{ID: "fixed", Type: "function", Function: schema.FunctionCall{Name: "kubernetes_query", Arguments: `{"name":"web"}`}}}), nil
+		return schema.AssistantMessage("核对目标后重新查询。", []schema.ToolCall{{ID: "fixed", Type: "function", Function: schema.FunctionCall{Name: m.toolName, Arguments: `{"name":"web"}`}}}), nil
 	}
 	if !m.sawRecovery {
 		return nil, errors.New("model did not receive corrected query result")
@@ -150,8 +151,14 @@ func (m *recoveryModel) Stream(ctx context.Context, messages []*schema.Message, 
 }
 
 func TestStreamingAgentContinuesAfterQueryError(t *testing.T) {
-	cm := &recoveryModel{}
-	agent, err := newWithModel(context.Background(), cm, []tool.BaseTool{&recoveryTool{name: "kubernetes_query"}, &recoveryTool{name: "list_clusters"}})
+	for _, name := range []string{"kubernetes_query", "kubernetes_logs"} {
+		t.Run(name, func(t *testing.T) { testStreamingAgentRecovery(t, name) })
+	}
+}
+
+func testStreamingAgentRecovery(t *testing.T, toolName string) {
+	cm := &recoveryModel{toolName: toolName}
+	agent, err := newWithModel(context.Background(), cm, []tool.BaseTool{&recoveryTool{name: toolName}, &recoveryTool{name: "list_clusters"}})
 	if err != nil {
 		t.Fatal(err)
 	}

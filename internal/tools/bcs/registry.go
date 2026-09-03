@@ -13,5 +13,6 @@ func NewTools(client bcsclient.Client, kubernetesClient kubeclient.Client) []too
 		&ListClustersTool{client: client},
 		&GetClusterDetailTool{client: client},
 		&KubernetesQueryTool{client: kubernetesClient},
+		&KubernetesLogsTool{client: kubernetesClient},
 	}
 }
