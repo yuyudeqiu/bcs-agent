@@ -34,8 +34,15 @@ func TestGatewayLogs(t *testing.T) {
 				case logPodPath:
 					fmt.Fprint(w, logPod)
 				case logPodPath + "/log":
+					// API Server 在读取日志前先做对象格式协商，text/plain-only 会被拒绝。
+					// 协商通过后，日志响应仍然是 text/plain，客户端应按原始流读取。
+					if r.Header.Get("Accept") != "application/json" {
+						w.WriteHeader(http.StatusNotAcceptable)
+						fmt.Fprint(w, `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotAcceptable","code":406,"message":"only the following media types are accepted: application/json"}`)
+						return
+					}
 					q := r.URL.Query()
-					if q.Get("container") != "app" || q.Get("timestamps") != "true" || q.Get("limitBytes") != "32769" || q.Get("follow") == "true" || r.Header.Get("Accept") != "text/plain" {
+					if q.Get("container") != "app" || q.Get("timestamps") != "true" || q.Get("limitBytes") != "32769" || q.Get("follow") == "true" {
 						t.Errorf("unexpected log request: %s", r.URL)
 					}
 					wantTail := "200"

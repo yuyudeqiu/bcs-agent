@@ -102,10 +102,12 @@ func (c *GatewayClient) Logs(ctx context.Context, q LogsRequest) (LogsResult, er
 	}
 	// 多读一个字节以识别超限，服务端限制之外再用 LimitReader 限制本地内存。
 	limit := int64(maxLogBytes + 1)
+	// 保留 restConfig 的 JSON Accept：API Server 先做对象格式协商，
+	// 强制 text/plain 会导致 406；Stream 直接读取日志响应体，不会将其解码为 JSON。
 	stream, err := client.Pods(q.Namespace).GetLogs(q.Pod, &corev1.PodLogOptions{
 		Container: q.Container, TailLines: q.TailLines, SinceSeconds: q.SinceSeconds,
 		Previous: q.Previous, Timestamps: true, Follow: false, LimitBytes: &limit,
-	}).SetHeader("Accept", "text/plain").Stream(ctx)
+	}).Stream(ctx)
 	if err != nil {
 		return LogsResult{}, c.queryError("读取容器日志", err)
 	}
