@@ -72,3 +72,51 @@ func TestKubernetesQueryRegistered(t *testing.T) {
 	}
 	t.Fatal("kubernetes_query not registered")
 }
+
+func TestKubernetesQueryOutputParameter(t *testing.T) {
+	client := &queryClient{}
+	queryTool := &KubernetesQueryTool{client: client}
+	for _, output := range []string{"", "full", ""} {
+		params := map[string]any{"cluster_id": "BCS-K8S-10001", "action": "get", "kind": "Pod", "namespace": "default", "name": "web"}
+		if output != "" {
+			params["output"] = output
+		}
+		arguments, _ := json.Marshal(params)
+		if _, err := queryTool.InvokableRun(context.Background(), string(arguments)); err != nil {
+			t.Fatal(err)
+		}
+		want := output
+		if want == "" {
+			want = "summary"
+		}
+		if client.request.Output != want {
+			t.Fatalf("output=%q, want %q", client.request.Output, want)
+		}
+	}
+	for _, arguments := range []string{
+		`{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Node","output":"full"}`,
+		`{"cluster_id":"BCS-K8S-10001","action":"get","kind":"Node","output":"full"}`,
+		`{"cluster_id":"BCS-K8S-10001","action":"get","kind":"Node","name":"worker","output":"raw"}`,
+		`{"cluster_id":"BCS-K8S-10001","action":"get","kind":"Node","name":"worker","output":true}`,
+	} {
+		if _, err := queryTool.InvokableRun(context.Background(), arguments); err == nil {
+			t.Errorf("accepted: %s", arguments)
+		}
+	}
+	if client.calls != 3 {
+		t.Fatalf("invalid output parameters reached client: %d", client.calls)
+	}
+
+	mockTool := &KubernetesQueryTool{client: kubeclient.NewMockClient()}
+	output, err := mockTool.InvokableRun(context.Background(), `{"cluster_id":"BCS-K8S-40890","action":"get","kind":"Widget","namespace":"default","name":"example","output":"full"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result kubeclient.QueryResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != "full" || result.Source != "mock" || result.Count != 1 || result.Items[0].Resource["spec"] == nil || result.Items[0].Details != nil {
+		t.Fatalf("tool did not serialize full resource: %s", output)
+	}
+}

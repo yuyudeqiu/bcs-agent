@@ -16,6 +16,7 @@ import (
 )
 
 type QueryRequest struct {
+	Output        string       `json:"output,omitempty"`
 	ClusterID     string       `json:"cluster_id"`
 	Action        string       `json:"action"`
 	Kind          string       `json:"kind"`
@@ -28,6 +29,7 @@ type QueryRequest struct {
 }
 
 type QueryResult struct {
+	Output        string            `json:"output"`
 	ClusterID     string            `json:"cluster_id"`
 	Action        string            `json:"action"`
 	Kind          string            `json:"kind"`
@@ -46,7 +48,9 @@ type ResourceSummary struct {
 	Kind       string         `json:"kind"`
 	Name       string         `json:"name"`
 	Namespace  string         `json:"namespace,omitempty"`
-	Details    map[string]any `json:"details"`
+	Details    map[string]any `json:"details,omitempty"`
+	Resource   map[string]any `json:"resource,omitempty"`
+	Redacted   bool           `json:"redacted,omitempty"`
 }
 
 type queryResource struct {
@@ -102,6 +106,15 @@ func (q *QueryRequest) NormalizeAndValidate() error {
 	if q.Action != "list" && q.Action != "get" {
 		return fmt.Errorf("action 仅支持 list 或 get")
 	}
+	if q.Output == "" {
+		q.Output = "summary"
+	}
+	if q.Output != "summary" && q.Output != "full" {
+		return fmt.Errorf("output 仅支持 summary 或 full")
+	}
+	if q.Output == "full" && q.Action != "get" {
+		return fmt.Errorf("output=full 仅支持 get，必须指定单个资源的 name")
+	}
 	if q.Namespace != "" && len(validation.IsDNS1123Label(q.Namespace)) != 0 {
 		return fmt.Errorf("namespace 格式无效")
 	}
@@ -136,7 +149,7 @@ func (q *QueryRequest) NormalizeAndValidate() error {
 }
 
 func newQueryResult(q QueryRequest, source string) QueryResult {
-	return QueryResult{ClusterID: q.ClusterID, Action: q.Action, Kind: q.Kind, GVR: *q.GVR, Namespace: q.Namespace, AllNamespaces: q.AllNamespaces, Source: source, Items: []ResourceSummary{}}
+	return QueryResult{Output: q.Output, ClusterID: q.ClusterID, Action: q.Action, Kind: q.Kind, GVR: *q.GVR, Namespace: q.Namespace, AllNamespaces: q.AllNamespaces, Source: source, Items: []ResourceSummary{}}
 }
 
 func (c *GatewayClient) Query(ctx context.Context, q QueryRequest) (QueryResult, error) {
@@ -218,8 +231,11 @@ func (c *GatewayClient) Query(ctx context.Context, q QueryRequest) (QueryResult,
 			(q.Namespace != "" && item.GetNamespace() != q.Namespace) {
 			return QueryResult{}, fmt.Errorf("Kubernetes 返回的资源身份与请求不一致或字段缺失")
 		}
-		summary, err := summarizeResource(item, c.cfg.APIToken)
+		summary, err := formatQueryResource(item, q.Output, c.cfg.APIToken)
 		if err != nil {
+			if q.Output == "full" {
+				return QueryResult{}, err
+			}
 			return QueryResult{}, c.queryError(fmt.Sprintf("解析 %s 摘要", q.Kind), err)
 		}
 		result.Items = append(result.Items, summary)

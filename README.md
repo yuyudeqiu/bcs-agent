@@ -34,6 +34,8 @@ go run ./cmd/bcs-agent
 
 资源查询可输入“查看某个集群 default 命名空间的 Pod”“查看某个集群的 Namespace”或指定 CRD Kind。`kubernetes_query` 支持 Kubernetes 原生资源和 CRD 的 `list/get`：程序通过 API Discovery 在内部解析目标集群的 preferred GVR，并以 dynamic client 查询；同名 Kind 有歧义或需要固定版本时也可显式传入 GVR。指定资源时使用 `name`，跨命名空间列表需明确 `all_namespaces=true`。列表默认每页 50 条（最多 100），`count` 是本页数量，`has_more` 和 `continue` 表示是否还有下一页。Discovery 映射按集群在内存缓存 10 分钟，真实模式需要 Discovery 接口及目标资源的读取权限。未配置 BCS 时使用标记为 `source=mock` 的示例数据。
 
+查询默认使用 `output: "summary"`。需要 CR 的具体配置或同步状态时，Agent 可自行对指定名称执行 `get` 并显式传 `output: "full"`；完整资源对象位于 `items[].resource`，包含 `spec`、`status` 等原有字段。常见凭证字段、敏感环境变量及 last-applied annotation 会脱敏，并标记 `redacted: true`。完整资源超过 64 KiB 时明确报错，不返回截断内容；该模式仅对本次单资源查询生效。
+
 终端命令：
 
 - `/clear`：清空当前对话历史

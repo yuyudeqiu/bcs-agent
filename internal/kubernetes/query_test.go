@@ -12,6 +12,7 @@ import (
 
 	"github.com/yuyudeqiu/bcs-agent/internal/config"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 const coreDiscovery = `{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"v1","resources":[{"name":"pods","kind":"Pod","namespaced":true,"verbs":["list","get"]},{"name":"namespaces","kind":"Namespace","namespaced":false,"verbs":["list","get"]},{"name":"nodes","kind":"Node","namespaced":false,"verbs":["list","get"]},{"name":"events","kind":"Event","namespaced":true,"verbs":["list","get"]}]}`
@@ -299,10 +300,11 @@ func TestQueryDiscoveryCRDVersionsAmbiguityAndCache(t *testing.T) {
 		}
 	})
 
-	query := QueryRequest{ClusterID: "BCS-K8S-10001", Action: "list", Kind: "CronJob", Namespace: "default"}
+	// 模型可能把 ImageLoader 一类驼峰 Kind 写成 Imageloader；解析应大小写不敏感并返回规范 Kind。
+	query := QueryRequest{ClusterID: "BCS-K8S-10001", Action: "list", Kind: "Cronjob", Namespace: "default"}
 	for i := 0; i < 2; i++ {
 		got, err := client.Query(context.Background(), query)
-		if err != nil || got.GVR != (ResourceRef{Group: "batch", Version: "v1beta1", Resource: "cronjobs"}) || got.Count != 1 {
+		if err != nil || got.Kind != "CronJob" || got.GVR != (ResourceRef{Group: "batch", Version: "v1beta1", Resource: "cronjobs"}) || got.Count != 1 {
 			t.Fatalf("CronJob query = %+v, %v", got, err)
 		}
 	}
@@ -364,5 +366,16 @@ func TestQueryExplicitGVRValidation(t *testing.T) {
 		if err := q.NormalizeAndValidate(); err == nil {
 			t.Errorf("accepted invalid GVR: %+v", q)
 		}
+	}
+}
+
+func TestDiscoveredKindUsesCanonicalCapitalization(t *testing.T) {
+	resource := discoveredResource{GVR: schema.GroupVersionResource{Group: "bcs.bkbcs.tencent.com", Version: "v1", Resource: "imageloaders"}, Kind: "ImageLoader", Namespaced: true, Verbs: map[string]bool{"list": true}}
+	got, err := validateDiscoveredResource(resource, QueryRequest{Action: "list", Kind: "Imageloader"})
+	if err != nil || got.Kind != "ImageLoader" {
+		t.Fatalf("case-insensitive Kind was rejected: %+v, %v", got, err)
+	}
+	if _, err := validateDiscoveredResource(resource, QueryRequest{Action: "list", Kind: "ImagePullJob"}); err == nil {
+		t.Fatal("different Kind was accepted")
 	}
 }

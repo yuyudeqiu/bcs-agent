@@ -105,7 +105,8 @@ func chooseDiscoveredResource(kind string, matches []discoveredResource, request
 }
 
 func validateDiscoveredResource(resource discoveredResource, request QueryRequest) (discoveredResource, error) {
-	if request.Kind != "" && request.Kind != resource.Kind {
+	// Kind 来自用户自然语言时大小写可能不规范；Discovery 返回值才是执行请求时使用的规范 Kind。
+	if request.Kind != "" && !strings.EqualFold(request.Kind, resource.Kind) {
 		return discoveredResource{}, fmt.Errorf("指定的 kind %s 与 GVR 对应的 Kind %s 不一致", request.Kind, resource.Kind)
 	}
 	if !resource.Verbs[request.Action] {

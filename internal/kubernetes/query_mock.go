@@ -94,7 +94,7 @@ func (c *MockClient) Query(ctx context.Context, q QueryRequest) (QueryResult, er
 	case "CronJob":
 		add("cleanup", "default", `{"status":{"lastScheduleTime":"2026-01-01T00:00:00Z"}}`)
 	case "Widget":
-		add("example", "default", `{"status":{"phase":"Ready","conditions":[{"type":"Available","status":"True","reason":"Reconciled"}]}}`)
+		add("example", "default", `{"spec":{"images":["registry.example.com/demo:v1"]},"status":{"phase":"Ready","syncedImages":1,"conditions":[{"type":"Available","status":"True","reason":"Reconciled"}]}}`)
 	}
 	matches := []ResourceSummary{}
 	for _, item := range objects {
@@ -104,7 +104,7 @@ func (c *MockClient) Query(ctx context.Context, q QueryRequest) (QueryResult, er
 		if q.Name != "" && item.GetName() != q.Name {
 			continue
 		}
-		summary, err := summarizeResource(item, "")
+		summary, err := formatQueryResource(item, q.Output, "")
 		if err != nil {
 			return QueryResult{}, err
 		}
