@@ -24,23 +24,27 @@ type QueryRequest struct {
 	Namespace     string       `json:"namespace,omitempty"`
 	AllNamespaces bool         `json:"all_namespaces,omitempty"`
 	Name          string       `json:"name,omitempty"`
+	NameContains  string       `json:"name_contains,omitempty"`
 	Limit         int64        `json:"limit,omitempty"`
 	Continue      string       `json:"continue,omitempty"`
 }
 
 type QueryResult struct {
-	Output        string            `json:"output"`
-	ClusterID     string            `json:"cluster_id"`
-	Action        string            `json:"action"`
-	Kind          string            `json:"kind"`
-	GVR           ResourceRef       `json:"gvr"`
-	Namespace     string            `json:"namespace,omitempty"`
-	AllNamespaces bool              `json:"all_namespaces,omitempty"`
-	Source        string            `json:"source"`
-	Items         []ResourceSummary `json:"items"`
-	Count         int               `json:"count"`
-	HasMore       bool              `json:"has_more"`
-	Continue      string            `json:"continue,omitempty"`
+	Output           string            `json:"output"`
+	ClusterID        string            `json:"cluster_id"`
+	Action           string            `json:"action"`
+	Kind             string            `json:"kind"`
+	GVR              ResourceRef       `json:"gvr"`
+	Namespace        string            `json:"namespace,omitempty"`
+	AllNamespaces    bool              `json:"all_namespaces,omitempty"`
+	NameContains     string            `json:"name_contains,omitempty"`
+	ScannedCount     int               `json:"scanned_count,omitempty"`
+	ScanLimitReached bool              `json:"scan_limit_reached,omitempty"`
+	Source           string            `json:"source"`
+	Items            []ResourceSummary `json:"items"`
+	Count            int               `json:"count"`
+	HasMore          bool              `json:"has_more"`
+	Continue         string            `json:"continue,omitempty"`
 }
 
 type ResourceSummary struct {
@@ -66,6 +70,11 @@ var queryResources = map[string]queryResource{
 	"Node":       {schema.GroupVersion{Version: "v1"}, false},
 	"Event":      {schema.GroupVersion{Version: "v1"}, true},
 }
+
+const maxNameScanPages = 20
+const maxNameScanResources = 1000
+
+var nameContainsPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 var kindPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
 
@@ -121,6 +130,14 @@ func (q *QueryRequest) NormalizeAndValidate() error {
 	if q.Name != "" && len(validation.IsDNS1123Subdomain(q.Name)) != 0 {
 		return fmt.Errorf("name 格式无效")
 	}
+	if q.NameContains != "" {
+		if q.Action != "list" {
+			return fmt.Errorf("name_contains 仅支持 list；完整名称请用 get 和 name")
+		}
+		if len(q.NameContains) > 253 || !nameContainsPattern.MatchString(q.NameContains) {
+			return fmt.Errorf("name_contains 必须是 1–253 字节的名称片段，只能包含字母、数字、点、下划线和连字符，不支持通配符或正则")
+		}
+	}
 	if q.AllNamespaces && (q.Namespace != "" || q.Action != "list") {
 		return fmt.Errorf("all_namespaces 仅用于 list，且不能同时指定 namespace")
 	}
@@ -149,7 +166,7 @@ func (q *QueryRequest) NormalizeAndValidate() error {
 }
 
 func newQueryResult(q QueryRequest, source string) QueryResult {
-	return QueryResult{Output: q.Output, ClusterID: q.ClusterID, Action: q.Action, Kind: q.Kind, GVR: *q.GVR, Namespace: q.Namespace, AllNamespaces: q.AllNamespaces, Source: source, Items: []ResourceSummary{}}
+	return QueryResult{Output: q.Output, ClusterID: q.ClusterID, Action: q.Action, Kind: q.Kind, GVR: *q.GVR, Namespace: q.Namespace, AllNamespaces: q.AllNamespaces, Source: source, NameContains: q.NameContains, Items: []ResourceSummary{}}
 }
 
 func (c *GatewayClient) Query(ctx context.Context, q QueryRequest) (QueryResult, error) {
@@ -188,60 +205,90 @@ func (c *GatewayClient) Query(ctx context.Context, q QueryRequest) (QueryResult,
 		endpoint = client.Resource(resource.GVR).Namespace(q.Namespace)
 	}
 	result := newQueryResult(q, "kubernetes")
-	var items []unstructured.Unstructured
-	if q.Action == "get" {
-		item, err := endpoint.Get(ctx, q.Name, metav1.GetOptions{})
-		if err != nil {
-			return QueryResult{}, c.queryError("获取 Kubernetes 资源", err)
-		}
-		items = []unstructured.Unstructured{*item}
-	} else {
-		page, err := endpoint.List(ctx, metav1.ListOptions{Limit: q.Limit, Continue: q.Continue})
-		if err != nil {
-			return QueryResult{}, c.queryError("列出 Kubernetes 资源", err)
-		}
-		if page.GetKind() != q.Kind+"List" || page.GetAPIVersion() != gv.String() {
-			return QueryResult{}, fmt.Errorf("Kubernetes 返回的列表类型与请求不一致")
-		}
-		// 不自行截断丢弃资源，否则服务端的 continue 无法对应丢弃的位置。
-		if int64(len(page.Items)) > q.Limit {
-			return QueryResult{}, fmt.Errorf("服务端未遵循 limit，无法安全返回完整分页")
-		}
-		items = page.Items
-		// Kubernetes 列表内的条目通常不重复携带 kind/apiVersion，继承已校验的列表类型。
-		for i := range items {
-			if items[i].GetKind() == "" {
-				items[i].SetKind(q.Kind)
-			}
-			if items[i].GetAPIVersion() == "" {
-				items[i].SetAPIVersion(gv.String())
-			}
-		}
-		result.Continue = page.GetContinue()
-		result.HasMore = result.Continue != ""
-		if result.HasMore && result.Continue == q.Continue {
-			return QueryResult{}, fmt.Errorf("服务端返回重复 continue 标记")
-		}
-	}
-	for _, item := range items {
+	// 先校验每个对象身份，再匹配名称；未匹配项不生成摘要、更不会进入工具输出。
+	appendItem := func(item unstructured.Unstructured) error {
 		if item.GetName() == "" || item.GetKind() != q.Kind || item.GetAPIVersion() != gv.String() ||
 			(q.Name != "" && item.GetName() != q.Name) ||
 			(resource.Namespaced && item.GetNamespace() == "") ||
 			(!resource.Namespaced && item.GetNamespace() != "") ||
 			(q.Namespace != "" && item.GetNamespace() != q.Namespace) {
-			return QueryResult{}, fmt.Errorf("Kubernetes 返回的资源身份与请求不一致或字段缺失")
+			return fmt.Errorf("Kubernetes 返回的资源身份与请求不一致或字段缺失")
+		}
+		if q.NameContains != "" && !strings.Contains(item.GetName(), q.NameContains) {
+			return nil
 		}
 		summary, err := formatQueryResource(item, q.Output, c.cfg.APIToken)
 		if err != nil {
 			if q.Output == "full" {
-				return QueryResult{}, err
+				return err
 			}
-			return QueryResult{}, c.queryError(fmt.Sprintf("解析 %s 摘要", q.Kind), err)
+			return c.queryError(fmt.Sprintf("解析 %s 摘要", q.Kind), err)
 		}
 		result.Items = append(result.Items, summary)
+		return nil
 	}
+	if q.Action == "get" {
+		item, err := endpoint.Get(ctx, q.Name, metav1.GetOptions{})
+		if err != nil {
+			return QueryResult{}, c.queryError("获取 Kubernetes 资源", err)
+		}
+		if err := appendItem(*item); err != nil {
+			return QueryResult{}, err
+		}
+	} else {
+		options := metav1.ListOptions{Limit: q.Limit, Continue: q.Continue}
+		seenTokens := map[string]bool{q.Continue: true}
+		for pageIndex := 0; pageIndex < queryScanPageLimit(q); pageIndex++ {
+			page, err := endpoint.List(ctx, options)
+			if err != nil {
+				return QueryResult{}, c.queryError("列出 Kubernetes 资源", err)
+			}
+			if page.GetKind() != q.Kind+"List" || page.GetAPIVersion() != gv.String() {
+				return QueryResult{}, fmt.Errorf("Kubernetes 返回的列表类型与请求不一致")
+			}
+			// 每次完整处理服务端一页，保持 limit 不变，避免丢失分页标记之前的匹配项。
+			if int64(len(page.Items)) > q.Limit {
+				return QueryResult{}, fmt.Errorf("服务端未遵循 limit，无法安全返回完整分页")
+			}
+			for _, item := range page.Items {
+				if item.GetKind() == "" {
+					item.SetKind(q.Kind)
+				}
+				if item.GetAPIVersion() == "" {
+					item.SetAPIVersion(gv.String())
+				}
+				if err := appendItem(item); err != nil {
+					return QueryResult{}, err
+				}
+			}
+			if q.NameContains != "" {
+				result.ScannedCount += len(page.Items)
+			}
+			result.Continue = page.GetContinue()
+			result.HasMore = result.Continue != ""
+			if result.HasMore && seenTokens[result.Continue] {
+				return QueryResult{}, fmt.Errorf("服务端返回重复 continue 标记")
+			}
+			if !result.HasMore || len(result.Items) > 0 || q.NameContains == "" {
+				break
+			}
+			seenTokens[result.Continue] = true
+			options.Continue = result.Continue
+			result.ScanLimitReached = pageIndex+1 == queryScanPageLimit(q)
+		}
+	}
+
 	result.Count = len(result.Items)
 	return result, nil
+}
+
+// 名称过滤会跳过空匹配页，但同时限制页数和资源数，避免稀疏匹配无限扫描。
+// limit 保持原样：改变服务端分页参数可能使 continue 无法继续使用。
+func queryScanPageLimit(q QueryRequest) int {
+	if q.NameContains == "" {
+		return 1
+	}
+	return min(maxNameScanPages, maxNameScanResources/int(q.Limit))
 }
 
 // 保留原始错误链供 errors.Is/As 判断，但不把服务端错误正文或凭证传入模型。

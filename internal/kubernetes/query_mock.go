@@ -133,11 +133,27 @@ func (c *MockClient) Query(ctx context.Context, q QueryRequest) (QueryResult, er
 			}
 			offset = value
 		}
-		end := min(offset+int(q.Limit), len(matches))
-		result.Items = matches[offset:end]
-		if end < len(matches) {
-			result.HasMore = true
-			result.Continue = strconv.Itoa(end)
+		// Mock 与真实客户端一样先分页再筛选，continue 指向原列表而非匹配列表。
+		for page := 0; page < queryScanPageLimit(q); page++ {
+			end := min(offset+int(q.Limit), len(matches))
+			for _, item := range matches[offset:end] {
+				if q.NameContains == "" || strings.Contains(item.Name, q.NameContains) {
+					result.Items = append(result.Items, item)
+				}
+			}
+			if q.NameContains != "" {
+				result.ScannedCount += end - offset
+			}
+			result.HasMore = end < len(matches)
+			result.Continue = ""
+			if result.HasMore {
+				result.Continue = strconv.Itoa(end)
+			}
+			if !result.HasMore || len(result.Items) > 0 || q.NameContains == "" {
+				break
+			}
+			offset = end
+			result.ScanLimitReached = page+1 == queryScanPageLimit(q)
 		}
 	}
 	result.Count = len(result.Items)

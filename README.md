@@ -34,6 +34,8 @@ go run ./cmd/bcs-agent
 
 资源查询可输入“查看某个集群 default 命名空间的 Pod”“查看某个集群的 Namespace”或指定 CRD Kind。`kubernetes_query` 支持 Kubernetes 原生资源和 CRD 的 `list/get`：程序通过 API Discovery 在内部解析目标集群的 preferred GVR，并以 dynamic client 查询；同名 Kind 有歧义或需要固定版本时也可显式传入 GVR。指定资源时使用 `name`，跨命名空间列表需明确 `all_namespaces=true`。列表默认每页 50 条（最多 100），`count` 是本页数量，`has_more` 和 `continue` 表示是否还有下一页。Discovery 映射按集群在内存缓存 10 分钟，真实模式需要 Discovery 接口及目标资源的读取权限。未配置 BCS 时使用标记为 `source=mock` 的示例数据。
 
+只知道名称片段时，例如“查找名称包含 cwlicense 的 Pod”，使用 `list` 和 `name_contains: "cwlicense"`，由客户端筛选后仅返回匹配项。匹配大小写敏感，不支持通配符；完整名称继续用 `get + name`。客户端会跳过无匹配页，找到含匹配项的一页即返回，单次最多扫描 20 页、1000 个资源，并复用原有 15 秒查询超时。`scanned_count` 表示本次扫描数量，`scan_limit_reached` 表示因扫描上限停止；`has_more=true` 表示还有未扫描资源，不保证后续有匹配项，也不能因本次匹配为空就断言目标不存在。继续扫描时保持过滤条件及其他参数不变，原样传回 `continue`；不传 `name_contains` 时保持原有分页行为。
+
 查询默认使用 `output: "summary"`。需要 CR 的具体配置或同步状态时，Agent 可自行对指定名称执行 `get` 并显式传 `output: "full"`；完整资源对象位于 `items[].resource`，包含 `spec`、`status` 等原有字段。常见凭证字段、敏感环境变量及 last-applied annotation 会脱敏，并标记 `redacted: true`。完整资源超过 64 KiB 时明确报错，不返回截断内容；该模式仅对本次单资源查询生效。
 
 日志排障使用 `kubernetes_logs`，例如“查看这个集群 default 下 web-0 的最近 100 行日志”。必填 `cluster_id`、`namespace`、`pod`；单容器可省略 `container`，多容器需明确选择（包括 init 和临时容器）。`tail_lines` 默认 200、范围 1–1000；可用正整数 `since_seconds` 限定最近多少秒，`previous` 默认 false，设为 true 读取上一次容器实例日志。结果始终带时间戳，仅返回一次快照；整个 JSON 输出最多 32 KiB，额外裁剪标记 `truncated=true`，不代表全部历史，也不支持 follow 或日志分页。已知网关 Token、常见凭证模式和 PEM 私钥会脱敏并标记 `redacted`，不保证识别任意业务敏感内容。真实模式通过 BCS 网关访问 Pod 和 `pods/log`，需要两者的读取权限；Mock 提供 `default/web-0` 的示例日志，不模拟历史日志。

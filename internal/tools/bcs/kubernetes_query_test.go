@@ -73,6 +73,41 @@ func TestKubernetesQueryRegistered(t *testing.T) {
 	t.Fatal("kubernetes_query not registered")
 }
 
+func TestKubernetesQueryNameContains(t *testing.T) {
+	client := &queryClient{}
+	queryTool := &KubernetesQueryTool{client: client}
+	args := `{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Pod","namespace":"default","name_contains":"cwlicense","continue":"next","limit":100}`
+	if _, err := queryTool.InvokableRun(context.Background(), args); err != nil {
+		t.Fatal(err)
+	}
+	if client.request.NameContains != "cwlicense" || client.request.Continue != "next" || client.request.Limit != 100 {
+		t.Fatalf("filter parameters lost: %+v", client.request)
+	}
+	for _, invalid := range []string{
+		`{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Pod","namespace":"default","name_contains":123}`,
+		`{"cluster_id":"BCS-K8S-10001","action":"list","kind":"Pod","namespace":"default","name_contains":"cw*"}`,
+		`{"cluster_id":"BCS-K8S-10001","action":"get","kind":"Pod","namespace":"default","name":"cwlicense","name_contains":"cw"}`,
+	} {
+		if _, err := queryTool.InvokableRun(context.Background(), invalid); err == nil {
+			t.Errorf("accepted %s", invalid)
+		}
+	}
+	if client.calls != 1 {
+		t.Fatalf("invalid filter reached client: %d", client.calls)
+	}
+	output, err := (&KubernetesQueryTool{client: kubeclient.NewMockClient()}).InvokableRun(context.Background(), `{"cluster_id":"BCS-K8S-40890","action":"list","kind":"Pod","all_namespaces":true,"name_contains":"web-1","limit":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result kubeclient.QueryResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Count != 1 || result.Items[0].Name != "web-1" || result.ScannedCount != 2 || result.NameContains != "web-1" {
+		t.Fatalf("unexpected filtered output: %s", output)
+	}
+}
+
 func TestKubernetesQueryOutputParameter(t *testing.T) {
 	client := &queryClient{}
 	queryTool := &KubernetesQueryTool{client: client}
