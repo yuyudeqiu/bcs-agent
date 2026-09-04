@@ -41,8 +41,11 @@ func newWithModel(ctx context.Context, chatModel model.ToolCallingChatModel, too
 		Model:       chatModel,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
-				Tools:               tools,
-				ToolCallMiddlewares: []compose.ToolMiddleware{{Invokable: recoverQueryErrors}},
+				Tools: tools,
+				ToolCallMiddlewares: []compose.ToolMiddleware{
+					{Invokable: recoverQueryErrors},
+					{Invokable: recoverScaleErrors},
+				},
 			},
 		},
 	})

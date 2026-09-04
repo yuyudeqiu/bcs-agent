@@ -61,6 +61,59 @@ func recoverQueryErrors(next compose.InvokableToolEndpoint) compose.InvokableToo
 	}
 }
 
+// 写操作错误作为明确的工具失败返回给模型，但不把中断、取消或超时转换为普通结果。
+// retryable 始终为 false：任何再次写入都必须重新读取目标并重新取得用户确认。
+func recoverScaleErrors(next compose.InvokableToolEndpoint) compose.InvokableToolEndpoint {
+	return func(ctx context.Context, input *compose.ToolInput) (*compose.ToolOutput, error) {
+		output, err := next(ctx, input)
+		if err == nil || input.Name != "kubernetes_scale" {
+			return output, err
+		}
+		if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
+		if _, ok := compose.IsInterruptRerunError(err); ok {
+			return nil, err
+		}
+		if _, ok := compose.ExtractInterruptInfo(err); ok {
+			return nil, err
+		}
+		detail := describeScaleFailure(err)
+		encoded, marshalErr := json.Marshal(struct {
+			OK        bool               `json:"ok"`
+			Retryable bool               `json:"retryable"`
+			Error     queryFailureDetail `json:"error"`
+		}{OK: false, Retryable: false, Error: detail})
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		return &compose.ToolOutput{Result: string(encoded)}, nil
+	}
+}
+
+func describeScaleFailure(err error) queryFailureDetail {
+	var status apierrors.APIStatus
+	if errors.As(err, &status) {
+		switch status.Status().Code {
+		case 401:
+			return queryFailureDetail{"unauthorized", "身份验证失败（HTTP 401）", "操作未确认成功；需要有效凭证。"}
+		case 403:
+			return queryFailureDetail{"forbidden", "没有扩缩容权限（HTTP 403）", "操作未执行；需要目标资源 scale 子资源的更新权限。"}
+		case 404:
+			return queryFailureDetail{"not_found", "目标资源或 scale 子资源不存在（HTTP 404）", "操作未执行；核对目标，重新查询后再发起新的确认。"}
+		case 409:
+			return queryFailureDetail{"conflict", "资源在执行前已变化（HTTP 409）", "不要自动重试；重新查询当前状态，并让用户确认新的变更。"}
+		case 429:
+			return queryFailureDetail{"rate_limited", "接口请求频率受限（HTTP 429）", "无法确认操作是否完成；先查询当前状态，不直接重复写入。"}
+		}
+	}
+	message := err.Error()
+	if strings.Contains(message, "确认期间已变化") {
+		return queryFailureDetail{"precondition_failed", message, "操作未执行；重新查询当前状态，并让用户确认新的变更。"}
+	}
+	return queryFailureDetail{"scale_error", message, "不要自动重试写操作；先查询目标当前状态，再决定是否需要新的用户确认。"}
+}
+
 var bcsHTTPError = regexp.MustCompile(`BCS 返回 HTTP ([0-9]{3}):`)
 var bcsBusinessError = regexp.MustCompile(`BCS 返回错误 code=(-?[0-9]+)`)
 

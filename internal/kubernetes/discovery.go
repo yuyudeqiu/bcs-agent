@@ -30,6 +30,7 @@ type discoveredResource struct {
 	Kind       string
 	Namespaced bool
 	Verbs      map[string]bool
+	Scale      bool
 }
 
 // discoveryCacheEntry 属于单个集群，两个索引服务于不同的解析入口。
@@ -180,6 +181,12 @@ func addDiscoveredResources(entry *discoveryCacheEntry, list *metav1.APIResource
 	if err != nil {
 		return fmt.Errorf("Discovery 返回无效 groupVersion")
 	}
+	scaleResources := make(map[string]bool)
+	for _, apiResource := range list.APIResources {
+		if parent, ok := strings.CutSuffix(apiResource.Name, "/scale"); ok {
+			scaleResources[parent] = true
+		}
+	}
 	for _, apiResource := range list.APIResources {
 		// 跳过缺少身份信息的条目及 pods/log、deployments/scale 等子资源。
 		// 通用 list/get 只处理主资源，不将子资源当成独立 Kind 候选。
@@ -190,7 +197,7 @@ func addDiscoveredResources(entry *discoveryCacheEntry, list *metav1.APIResource
 		for _, verb := range apiResource.Verbs {
 			verbs[verb] = true
 		}
-		resource := discoveredResource{GVR: gv.WithResource(apiResource.Name), Kind: apiResource.Kind, Namespaced: apiResource.Namespaced, Verbs: verbs}
+		resource := discoveredResource{GVR: gv.WithResource(apiResource.Name), Kind: apiResource.Kind, Namespaced: apiResource.Namespaced, Verbs: verbs, Scale: scaleResources[apiResource.Name]}
 		entry.byKind[strings.ToLower(resource.Kind)] = append(entry.byKind[strings.ToLower(resource.Kind)], resource)
 		entry.byGVR[discoveryKey(resource.GVR)] = resource
 	}

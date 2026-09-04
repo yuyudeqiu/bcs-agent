@@ -40,6 +40,8 @@ go run ./cmd/bcs-agent
 
 日志排障使用 `kubernetes_logs`，例如“查看这个集群 default 下 web-0 的最近 100 行日志”。必填 `cluster_id`、`namespace`、`pod`；单容器可省略 `container`，多容器需明确选择（包括 init 和临时容器）。`tail_lines` 默认 200、范围 1–1000；可用正整数 `since_seconds` 限定最近多少秒，`previous` 默认 false，设为 true 读取上一次容器实例日志。结果始终带时间戳，仅返回一次快照；整个 JSON 输出最多 32 KiB，额外裁剪标记 `truncated=true`，不代表全部历史，也不支持 follow 或日志分页。已知网关 Token、常见凭证模式和 PEM 私钥会脱敏并标记 `redacted`，不保证识别任意业务敏感内容。真实模式通过 BCS 网关访问 Pod 和 `pods/log`，需要两者的读取权限；Mock 提供 `default/web-0` 的示例日志，不模拟历史日志。
 
+扩缩容使用 `kubernetes_scale`，例如“把这个集群 default 下的 StatefulSet db 扩到 3 个副本”。工具接受明确的 `cluster_id`、`namespace`、`name`、目标 `replicas`，通常只需再传 Kind；Kind 有歧义或需要固定版本时可显式传完整 GVR。程序通过 Discovery 确认资源提供 `/scale` 子资源，因此不仅支持 Deployment 和 StatefulSet，也支持实际配置了 scale 子资源的 CRD。执行前会展示当前副本数和目标副本数并在终端等待确认；确认与资源 UID、`resourceVersion` 和当前副本数绑定，目标在确认期间变化时拒绝执行，失败后不会自动重复写入。`submitted=true` 只表示 API 已接受更新；`converged` 只比较 Scale 返回的 observed replicas，不表示 Pod 已 Ready。真实模式需要目标主资源的读取权限以及其 scale 子资源的读取和更新权限。
+
 终端命令：
 
 - `/clear`：清空当前对话历史

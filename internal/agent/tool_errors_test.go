@@ -181,3 +181,74 @@ func testStreamingAgentRecovery(t *testing.T, toolName string) {
 		t.Fatalf("loop did not recover: steps=%d failure=%v parallel=%v recovered=%v events=%d text=%s", cm.step, cm.sawFailure, cm.sawParallelSuccess, cm.sawRecovery, failedResults, text.String())
 	}
 }
+
+type scaleFailureTool struct{}
+
+func (t *scaleFailureTool) Info(context.Context) (*schema.ToolInfo, error) {
+	return &schema.ToolInfo{Name: "kubernetes_scale", Desc: "test scale"}, nil
+}
+func (t *scaleFailureTool) InvokableRun(context.Context, string, ...tool.Option) (string, error) {
+	return "", apierrors.NewConflict(kschema.GroupResource{Group: "apps", Resource: "deployments"}, "web", errors.New("changed"))
+}
+
+type scaleFailureModel struct {
+	step       int
+	sawFailure bool
+}
+
+func (m *scaleFailureModel) WithTools([]*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	return m, nil
+}
+func (m *scaleFailureModel) Generate(_ context.Context, messages []*schema.Message, _ ...model.Option) (*schema.Message, error) {
+	m.step++
+	if m.step == 1 {
+		return schema.AssistantMessage("", []schema.ToolCall{{
+			ID: "scale", Type: "function", Function: schema.FunctionCall{Name: "kubernetes_scale", Arguments: `{}`},
+		}}), nil
+	}
+	for _, message := range messages {
+		if message.Role == schema.Tool && message.ToolCallID == "scale" {
+			var result struct {
+				OK        bool               `json:"ok"`
+				Retryable bool               `json:"retryable"`
+				Error     queryFailureDetail `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(message.Content), &result); err != nil {
+				return nil, err
+			}
+			m.sawFailure = !result.OK && !result.Retryable && result.Error.Code == "conflict"
+		}
+	}
+	if !m.sawFailure {
+		return nil, errors.New("model did not receive non-retryable scale conflict")
+	}
+	return schema.AssistantMessage("资源已变化，需要重新查询并确认，没有自动重试。", nil), nil
+}
+func (m *scaleFailureModel) Stream(ctx context.Context, messages []*schema.Message, opts ...model.Option) (*schema.StreamReader[*schema.Message], error) {
+	message, err := m.Generate(ctx, messages, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return schema.StreamReaderFromArray([]*schema.Message{message}), nil
+}
+
+func TestStreamingAgentReportsScaleFailureWithoutRetry(t *testing.T) {
+	cm := &scaleFailureModel{}
+	agent, err := newWithModel(context.Background(), cm, []tool.BaseTool{&scaleFailureTool{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := chat.NewSession(agent)
+	var text strings.Builder
+	if err := session.AskStream(context.Background(), "扩容 web", func(event chat.Event) error {
+		if event.Type == chat.EventTextDelta {
+			text.WriteString(event.Content)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cm.step != 2 || !cm.sawFailure || !strings.Contains(text.String(), "没有自动重试") {
+		t.Fatalf("steps=%d failure=%v text=%s", cm.step, cm.sawFailure, text.String())
+	}
+}
