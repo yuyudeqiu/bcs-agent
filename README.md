@@ -1,6 +1,6 @@
 # BCS Agent
 
-面向 Blueking Container Service 的终端运维 Agent。当前版本提供流式多轮终端对话和 BCS 查询工具（项目列表、集群列表已接入真实 API，集群列表支持可选的项目 ID 过滤；集群详情在真实模式下尚未接入，Mock 模式提供示例数据），模型生成的文本会实时输出。
+面向 Blueking Container Service 的终端运维 Agent。当前版本提供流式多轮终端对话和 BCS 查询工具（项目列表、集群列表已接入真实 API，集群列表支持可选的项目 ID 过滤，模型生成的文本会实时输出。
 
 ## 运行
 
@@ -12,6 +12,16 @@ cp .env.example .env
 # 2. 启动（程序启动时自动读取 .env；已 export 的环境变量优先级更高，不会被覆盖）
 go run ./cmd/bcs-agent
 ```
+
+不带参数时进入交互模式。也可以传入一次性 prompt，得到结果后直接退出，适合本地调试和脚本调用：
+
+```bash
+go run ./cmd/bcs-agent -p "查看项目列表"
+go run ./cmd/bcs-agent --prompt "查看集群 BCS-K8S-10001 的节点数量"
+go run ./cmd/bcs-agent 查看项目列表
+```
+
+一次性 prompt 仍然使用 `.env` 和流式输出。扩缩容等写操作仍会在终端等待 `y/N` 确认；标准输入已关闭时不会执行待确认操作，并以非零状态退出。
 
 也可以不用 `.env`，直接 export：
 
