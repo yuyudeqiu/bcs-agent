@@ -1,70 +1,58 @@
 # BCS Agent
 
-面向 Blueking Container Service 的终端运维 Agent。当前版本提供流式多轮终端对话和 BCS 查询工具（项目列表、集群列表已接入真实 API，集群列表支持可选的项目 ID 过滤，模型生成的文本会实时输出。
+基于 Go + Eino 的 Blueking Container Service 运维 Agent，通过自然语言查询集群与 Kubernetes 资源、读取日志，并在人工确认后执行扩缩容。当前提供终端交互，Web 界面尚未实现。
 
-## 运行
+## 当前能力
+
+- **多轮对话**：流式输出回答，展示工具调用及结果。
+- **资源查询**：BCS 项目与集群列表；通过 BCS 网关查询 Kubernetes 原生资源和 CRD，使用 Discovery 解析 Kind/GVR，支持列表、详情和名称片段筛选。
+- **排障数据**：查询 Pod、Event 和容器日志，为分析提供依据；稳定的端到端故障诊断场景仍待验证。
+- **受控扩缩容**：支持提供 `/scale` 子资源的工作负载；通过 Eino 中断与恢复等待确认，执行前校验资源 UID、resourceVersion 和副本数，拒绝过期变更。
+
+## 快速开始
+
+Go 版本要求见 [go.mod](go.mod)。准备配置后启动：
 
 ```bash
-# 1. 准备环境变量（模板见 .env.example）
 cp .env.example .env
-#    编辑 .env，填入真实的 OPENAI_API_KEY / OPENAI_MODEL 等
-
-# 2. 启动（程序启动时自动读取 .env；已 export 的环境变量优先级更高，不会被覆盖）
+# 编辑 .env，填写 OPENAI_API_KEY、OPENAI_MODEL；兼容服务按需填写 OPENAI_BASE_URL
 go run ./cmd/bcs-agent
 ```
 
-不带参数时进入交互模式。也可以传入一次性 prompt，得到结果后直接退出，适合本地调试和脚本调用：
+程序自动读取 `.env`，已设置的环境变量优先。配置说明见 [.env.example](.env.example)。
+
+- **Mock 模式**：未同时配置 `BCS_BASE_URL` 和 `BCS_API_TOKEN` 时使用内置示例数据，仍需调用真实模型服务。
+- **真实模式**：同时配置 BCS 地址和 Token，经网关访问目标集群；需具备 Discovery 和目标资源的相应权限。当前默认跳过 BCS TLS 校验，生产环境应设置 `BCS_INSECURE_SKIP_VERIFY=false`。
+
+也可执行一次性提问：
 
 ```bash
 go run ./cmd/bcs-agent -p "查看项目列表"
-go run ./cmd/bcs-agent --prompt "查看集群 BCS-K8S-10001 的节点数量"
-go run ./cmd/bcs-agent 查看项目列表
 ```
 
-一次性 prompt 仍然使用 `.env` 和流式输出。扩缩容等写操作仍会在终端等待 `y/N` 确认；标准输入已关闭时不会执行待确认操作，并以非零状态退出。
+交互示例（集群和资源名称请替换为实际目标）：
 
-也可以不用 `.env`，直接 export：
-
-```bash
-export OPENAI_API_KEY="..."
-export OPENAI_MODEL="..."
-# 使用兼容 OpenAI API 的服务时可选：
-export OPENAI_BASE_URL="..."
-
-# 接入真实 BCS API 时（不设置则使用内置 Mock）；base 填 host：
-export BCS_BASE_URL="https://bcs.example.com"
-export BCS_API_TOKEN="..."
-# BCS dev 证书不自带，默认跳过 TLS 校验；生产设 false 关闭：
-# export BCS_INSECURE_SKIP_VERIFY=false
-
-go run ./cmd/bcs-agent
+```text
+查看集群 BCS-K8S-40888 的 default 命名空间下的 Pod
+查看这个集群 default 下 web-0 最近 100 行日志
+把这个集群 default 下的 Deployment web 扩到 3 个副本
 ```
 
-查询节点数量可输入“查看某个集群的节点数量”，Agent 会调用 `kubernetes_query`（`action=list`、`kind=Node`），读取所有分页后汇总节点总数、Ready 数和非 Ready 数（含 Unknown 或缺失 Ready 条件）。Ready 不代表可调度，节点总数包含控制平面和工作节点。真实模式复用 BCS 配置，Token 需要有 Discovery 接口及目标集群节点列表的读取权限。未配置 BCS 时返回标记为 `source=mock` 的示例数据。
+扩缩容会展示变更并等待 `y/N` 确认，一次性提问也不绕过确认；标准输入关闭时不会执行待确认操作。终端支持 `/clear` 清空历史、`/exit` 退出。
 
-资源查询可输入“查看某个集群 default 命名空间的 Pod”“查看某个集群的 Namespace”或指定 CRD Kind。`kubernetes_query` 支持 Kubernetes 原生资源和 CRD 的 `list/get`：程序通过 API Discovery 在内部解析目标集群的 preferred GVR，并以 dynamic client 查询；同名 Kind 有歧义或需要固定版本时也可显式传入 GVR。指定资源时使用 `name`，跨命名空间列表需明确 `all_namespaces=true`。列表默认每页 50 条（最多 100），`count` 是本页数量，`has_more` 和 `continue` 表示是否还有下一页。Discovery 映射按集群在内存缓存 10 分钟，真实模式需要 Discovery 接口及目标资源的读取权限。未配置 BCS 时使用标记为 `source=mock` 的示例数据。
+## 能力边界
 
-只知道名称片段时，例如“查找名称包含 cwlicense 的 Pod”，使用 `list` 和 `name_contains: "cwlicense"`，由客户端筛选后仅返回匹配项。匹配大小写敏感，不支持通配符；完整名称继续用 `get + name`。客户端会跳过无匹配页，找到含匹配项的一页即返回，单次最多扫描 20 页、1000 个资源，并复用原有 15 秒查询超时。`scanned_count` 表示本次扫描数量，`scan_limit_reached` 表示因扫描上限停止；`has_more=true` 表示还有未扫描资源，不保证后续有匹配项，也不能因本次匹配为空就断言目标不存在。继续扫描时保持过滤条件及其他参数不变，原样传回 `continue`；不传 `name_contains` 时保持原有分页行为。
+- BCS 项目、集群列表已接入真实 API；BCS 集群详情 API 尚未接入，节点统计通过 Kubernetes 查询完成。真实请求失败不会回退到 Mock。
+- 资源默认返回摘要，列表可能分页；单资源可显式请求完整内容，但仍会脱敏，超出大小限制时报错。日志为有限快照，可能裁剪，不支持实时跟随；脱敏不保证覆盖任意业务敏感信息。
+- 扩缩容请求被 API 接受不代表 Pod 已就绪，需进一步查询状态。会话与审批检查点仅保存在进程内，重启后丢失。
 
-查询默认使用 `output: "summary"`。需要 CR 的具体配置或同步状态时，Agent 可自行对指定名称执行 `get` 并显式传 `output: "full"`；完整资源对象位于 `items[].resource`，包含 `spec`、`status` 等原有字段。常见凭证字段、敏感环境变量及 last-applied annotation 会脱敏，并标记 `redacted: true`。完整资源超过 64 KiB 时明确报错，不返回截断内容；该模式仅对本次单资源查询生效。
+## 代码结构
 
-日志排障使用 `kubernetes_logs`，例如“查看这个集群 default 下 web-0 的最近 100 行日志”。必填 `cluster_id`、`namespace`、`pod`；单容器可省略 `container`，多容器需明确选择（包括 init 和临时容器）。`tail_lines` 默认 200、范围 1–1000；可用正整数 `since_seconds` 限定最近多少秒，`previous` 默认 false，设为 true 读取上一次容器实例日志。结果始终带时间戳，仅返回一次快照；整个 JSON 输出最多 32 KiB，额外裁剪标记 `truncated=true`，不代表全部历史，也不支持 follow 或日志分页。已知网关 Token、常见凭证模式和 PEM 私钥会脱敏并标记 `redacted`，不保证识别任意业务敏感内容。真实模式通过 BCS 网关访问 Pod 和 `pods/log`，需要两者的读取权限；Mock 提供 `default/web-0` 的示例日志，不模拟历史日志。
+调用链：`CLI → chat 会话 → Eino Agent → tools → BCS / Kubernetes 客户端`。
 
-扩缩容使用 `kubernetes_scale`，例如“把这个集群 default 下的 StatefulSet db 扩到 3 个副本”。工具接受明确的 `cluster_id`、`namespace`、`name`、目标 `replicas`，通常只需再传 Kind；Kind 有歧义或需要固定版本时可显式传完整 GVR。程序通过 Discovery 确认资源提供 `/scale` 子资源，因此不仅支持 Deployment 和 StatefulSet，也支持实际配置了 scale 子资源的 CRD。执行前会展示当前副本数和目标副本数并在终端等待确认；确认与资源 UID、`resourceVersion` 和当前副本数绑定，目标在确认期间变化时拒绝执行，失败后不会自动重复写入。`submitted=true` 只表示 API 已接受更新；`converged` 只比较 Scale 返回的 observed replicas，不表示 Pod 已 Ready。真实模式需要目标主资源的读取权限以及其 scale 子资源的读取和更新权限。
+- `cmd/bcs-agent`：启动与组件组装。
+- `internal/chat`、`internal/cli`：会话历史、流式事件与终端展示。
+- `internal/agent`、`internal/tools/bcs`：Agent 配置、工具错误处理与工具适配。
+- `internal/bcs`、`internal/kubernetes`：真实 API 通信、通用资源访问及 Mock。
 
-终端命令：
-
-- `/clear`：清空当前对话历史
-- `/exit`：退出程序
-
-## 目录
-
-- `cmd/bcs-agent`：程序入口
-- `internal/agent`：模型和 Agent 配置
-- `internal/chat`：会话和多轮历史
-- `internal/cli`：终端交互入口
-- `internal/tools/bcs`：提供给模型调用的 BCS 工具
-- `internal/bcs`：BCS Client 接口、数据类型、Mock 与真实 HTTP 实现
-- `internal/kubernetes`：client-go 网关客户端、资源查询与摘要
-
-后续接入 Web 时，Web Handler 将复用 `internal/chat`、`internal/agent` 和工具层。
+后续 Web 入口将复用现有会话、Agent 和客户端层。
