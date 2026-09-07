@@ -16,7 +16,7 @@ Go 版本要求见 [go.mod](go.mod)。准备配置后启动：
 ```bash
 cp .env.example .env
 # 编辑 .env，填写 OPENAI_API_KEY、OPENAI_MODEL；兼容服务按需填写 OPENAI_BASE_URL
-go run ./cmd/bcs-agent
+go run ./cmd/bcs-agent cli
 ```
 
 程序自动读取 `.env`，已设置的环境变量优先。配置说明见 [.env.example](.env.example)。
@@ -27,8 +27,10 @@ go run ./cmd/bcs-agent
 也可执行一次性提问：
 
 ```bash
-go run ./cmd/bcs-agent -p "查看项目列表"
+go run ./cmd/bcs-agent cli -p "查看项目列表"
 ```
+
+程序使用子命令区分运行入口：`cli` 启动现有终端模式，`server` 预留给 Web 服务。当前 `server` 入口已经建立，HTTP 服务尚未实现。
 
 交互示例（集群和资源名称请替换为实际目标）：
 
