@@ -2,13 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/joho/godotenv"
+	"k8s.io/klog/v2"
 
 	"github.com/yuyudeqiu/bcs-agent/internal/agent"
 	"github.com/yuyudeqiu/bcs-agent/internal/bcs"
@@ -20,6 +24,19 @@ import (
 )
 
 func main() {
+	// client-go uses klog for internal diagnostics. Keep errors visible without
+	// mixing throttling and discovery INFO messages into the CLI stream.
+	klog.SetSlogLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+
+	options, err := parseOptions(os.Args[1:], os.Stderr)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		fmt.Fprintf(os.Stderr, "参数错误: %v\n", err)
+		os.Exit(2)
+	}
+
 	// 加载 .env（若存在）；已 export 的环境变量优先级更高，不会被覆盖。
 	_ = godotenv.Load()
 
@@ -46,7 +63,12 @@ func main() {
 	}
 
 	session := chat.NewSession(chatAgent)
-	if err := cli.Run(ctx, os.Stdin, os.Stdout, session); err != nil {
+	if options.runOnce {
+		err = cli.RunOnce(ctx, os.Stdin, os.Stdout, session, options.prompt)
+	} else {
+		err = cli.Run(ctx, os.Stdin, os.Stdout, session)
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "BCS Agent 退出: %v\n", err)
 		os.Exit(1)
 	}

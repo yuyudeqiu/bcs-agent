@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 
 	bcsclient "github.com/yuyudeqiu/bcs-agent/internal/bcs"
+	"github.com/yuyudeqiu/bcs-agent/internal/utils"
 )
 
 type ListClustersTool struct {
@@ -18,11 +19,11 @@ type ListClustersTool struct {
 func (t *ListClustersTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return &schema.ToolInfo{
 		Name: "list_clusters",
-		Desc: "查询集群列表，可选按项目 ID 过滤。用户查询全部集群或未限定项目时，直接不带 project_id 调用；用户指定项目名称且 ID 未确定时，先调用 list_projects 确定，无法确定时追问，不改为查询全部。返回集群 ID、名称、状态、BCS 记录的 Kubernetes 版本和环境，接口也可能返回共享集群。版本和环境缺失时表示未知，不根据名称推断环境。未返回节点数时不能视为 0。",
+		Desc: "查询 BCS 集群列表以确定目标集群，可按项目过滤，结果可能包含共享集群。返回 ID、名称、状态及 BCS 记录的 Kubernetes 版本和环境；缺失字段表示未知，不根据名称推断环境，不将缺失节点数视为 0。",
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
 			"project_id": {
 				Type: schema.String,
-				Desc: "可选；不传或为空时不按项目过滤。按项目查询时使用 list_projects 返回的 projectID，不是项目名称或 projectCode",
+				Desc: "未限定项目时省略或传空。限定项目时用 list_projects 返回的 projectID，不是名称或 projectCode；只有项目名称时先查 ID，无法确定则追问，不能改查全部",
 			},
 		}),
 	}, nil
@@ -32,7 +33,7 @@ func (t *ListClustersTool) InvokableRun(ctx context.Context, arguments string, _
 	var params struct {
 		ProjectID string `json:"project_id"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &params); err != nil {
+	if err := utils.DecodeJSONStrict(arguments, &params); err != nil {
 		return "", fmt.Errorf("解析 list_clusters 参数: %w", err)
 	}
 	clusters, err := t.client.ListClusters(ctx, params.ProjectID)
