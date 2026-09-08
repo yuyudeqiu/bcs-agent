@@ -30,7 +30,16 @@ go run ./cmd/bcs-agent cli
 go run ./cmd/bcs-agent cli -p "查看项目列表"
 ```
 
-程序使用子命令区分运行入口：`cli` 启动现有终端模式，`server` 预留给 Web 服务。当前 `server` 入口已经建立，HTTP 服务尚未实现。
+程序使用子命令区分运行入口：`cli` 启动终端模式，`server` 启动 Web 服务。Web 服务默认监听 `:8080`，可通过 `--addr` 修改：
+
+```bash
+go run ./cmd/bcs-agent server
+go run ./cmd/bcs-agent server --addr 127.0.0.1:9090
+```
+
+打开 `http://localhost:8080` 可从集群列表进入 Namespace 列表，再查看所选 Namespace 内的 Deployment、Pod 和 Warning Event。异常 Pod 会优先展示，可对具体 Pod 发起流式 AI 诊断。基础页面不依赖 OpenAI 配置；未配置模型时仅停用 AI 诊断。
+
+Web API 当前包括：`GET /api/v1/clusters`、`GET /api/v1/clusters/:clusterID/namespaces`、`GET /api/v1/clusters/:clusterID/namespaces/:namespace/overview` 和 `POST /api/v1/diagnoses`。集群列表可通过 `project_id` 查询参数按项目过滤，`GET /healthz` 用于健康检查。诊断接口只注册查询与日志等只读工具，不开放扩缩容工具。
 
 交互示例（集群和资源名称请替换为实际目标）：
 
@@ -50,10 +59,11 @@ go run ./cmd/bcs-agent cli -p "查看项目列表"
 
 ## 代码结构
 
-调用链：`CLI → chat 会话 → Eino Agent → tools → BCS / Kubernetes 客户端`。
+调用链：`CLI → chat 会话 → Eino Agent → tools → BCS / Kubernetes 客户端`；Web 的确定性功能直接调用客户端，不经过 CLI 或模型。
 
 - `cmd/bcs-agent`：启动与组件组装。
 - `internal/chat`、`internal/cli`：会话历史、流式事件与终端展示。
+- `internal/web`：Gin 路由、Web API 与页面资源。
 - `internal/agent`、`internal/tools/bcs`：Agent 配置、工具错误处理与工具适配。
 - `internal/bcs`、`internal/kubernetes`：真实 API 通信、通用资源访问及 Mock。
 

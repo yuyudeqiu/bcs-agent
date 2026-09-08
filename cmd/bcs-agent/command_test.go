@@ -32,7 +32,7 @@ func TestCLICommand(t *testing.T) {
 					got = options
 					return nil
 				},
-				server: func(context.Context) error { return nil },
+				server: func(context.Context, serverOptions) error { return nil },
 			}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
 			command.SetArgs(test.args)
 
@@ -61,20 +61,45 @@ func TestCLICommand(t *testing.T) {
 
 func TestServerCommand(t *testing.T) {
 	called := false
+	var got serverOptions
 	command := newRootCommand(commandRunner{
 		cli: func(context.Context, cliOptions) error { return nil },
-		server: func(context.Context) error {
+		server: func(_ context.Context, options serverOptions) error {
 			called = true
+			got = options
 			return nil
 		},
 	}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
-	command.SetArgs([]string{"server"})
+	command.SetArgs([]string{"server", "--addr", "127.0.0.1:9090"})
 
 	if err := command.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 	if !called {
 		t.Fatal("server runner was not called")
+	}
+	if got.addr != "127.0.0.1:9090" {
+		t.Fatalf("server addr = %q", got.addr)
+	}
+}
+
+func TestServerCommandRejectsEmptyAddress(t *testing.T) {
+	called := false
+	command := newRootCommand(commandRunner{
+		cli: func(context.Context, cliOptions) error { return nil },
+		server: func(context.Context, serverOptions) error {
+			called = true
+			return nil
+		},
+	}, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{})
+	command.SetArgs([]string{"server", "--addr", "  "})
+
+	err := command.Execute()
+	if err == nil || !strings.Contains(err.Error(), "addr 不能为空") {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if called {
+		t.Fatal("server runner called with an empty address")
 	}
 }
 
@@ -86,7 +111,7 @@ func TestRootCommandShowsHelp(t *testing.T) {
 			called = true
 			return nil
 		},
-		server: func(context.Context) error {
+		server: func(context.Context, serverOptions) error {
 			called = true
 			return nil
 		},

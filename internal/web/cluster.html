@@ -1,0 +1,119 @@
+{{ define "cluster.html" }}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>集群详情 · BCS Agent</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f7fb; color: #172033; }
+    header { padding: 22px 32px; color: #fff; background: #182b56; }
+    header a { color: #bdcae5; text-decoration: none; font-size: 13px; }
+    header h1 { margin: 12px 0 5px; font-size: 22px; }
+    header p { margin: 0; color: #bdcae5; font-size: 14px; }
+    main { max-width: 1040px; margin: 26px auto; padding: 0 24px 40px; }
+    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 20px; }
+    .metric, .panel { border: 1px solid #e2e8f2; border-radius: 12px; background: #fff; box-shadow: 0 8px 24px rgba(31, 50, 86, .05); }
+    .metric { padding: 18px 20px; }
+    .metric span { color: #66758a; font-size: 12px; }
+    .metric strong { display: block; margin-top: 7px; font-size: 24px; }
+    .panel { overflow: hidden; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #edf1f7; }
+    .panel-head h2 { margin: 0; font-size: 16px; }
+    .hint { color: #718096; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 13px 20px; border-bottom: 1px solid #edf1f7; text-align: left; font-size: 14px; }
+    th { color: #526176; background: #f8fafd; font-size: 12px; }
+    tbody tr:hover { background: #f8fbff; }
+    td a { color: #1768e5; font-weight: 600; text-decoration: none; }
+    .footer { display: none; padding: 14px 20px; text-align: center; }
+    .footer.active { display: block; }
+    button { padding: 9px 15px; border: 0; border-radius: 7px; color: #fff; background: #1768e5; cursor: pointer; }
+    button:disabled { cursor: wait; opacity: .6; }
+    .empty, .loading, .error { padding: 42px 20px; text-align: center; color: #718096; }
+    .error { color: #b42318; }
+    @media (max-width: 640px) { header { padding: 20px; } main { padding: 0 12px 30px; } .metrics { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/">← 返回集群列表</a>
+    <h1 id="cluster-name">加载集群...</h1>
+    <p id="cluster-meta">{{ .ClusterID }}</p>
+  </header>
+  <main>
+    <div class="metrics">
+      <div class="metric"><span>Node 就绪</span><strong id="nodes">—</strong></div>
+      <div class="metric"><span>Namespace</span><strong id="namespace-count">—</strong></div>
+    </div>
+    <section class="panel">
+      <div class="panel-head"><h2>Namespace</h2><span id="namespace-hint" class="hint">选择 Namespace 查看工作负载和 Pod</span></div>
+      <table>
+        <thead><tr><th>名称</th><th>状态</th></tr></thead>
+        <tbody id="namespaces"><tr><td colspan="2" class="loading">正在查询...</td></tr></tbody>
+      </table>
+      <div id="load-more-wrap" class="footer"><button id="load-more" type="button">加载更多</button></div>
+    </section>
+  </main>
+  <script>
+    const clusterID = {{ .ClusterID }};
+    let continuation = '';
+
+    function showError(message) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 2;
+      cell.className = 'error';
+      cell.textContent = message;
+      row.appendChild(cell);
+      document.querySelector('#namespaces').replaceChildren(row);
+    }
+
+    async function loadNamespaces(append = false) {
+      try {
+        const query = continuation ? `?continue=${encodeURIComponent(continuation)}` : '';
+        const response = await fetch(`/api/v1/clusters/${encodeURIComponent(clusterID)}/namespaces${query}`);
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error?.message || '查询 Namespace 失败');
+        document.querySelector('#cluster-name').textContent = result.cluster.cluster_name || result.cluster.cluster_id;
+        document.querySelector('#cluster-meta').textContent = [result.cluster.cluster_id, result.cluster.environment, result.cluster.kubernetes_version].filter(Boolean).join(' · ');
+        document.querySelector('#nodes').textContent = `${result.ready_nodes} / ${result.node_count}${result.nodes_has_more ? '+' : ''}`;
+
+        const body = document.querySelector('#namespaces');
+        if (!append) body.replaceChildren();
+        for (const namespace of result.namespaces) {
+          const row = document.createElement('tr');
+          const nameCell = document.createElement('td');
+          const link = document.createElement('a');
+          link.href = `/clusters/${encodeURIComponent(clusterID)}/namespaces/${encodeURIComponent(namespace.name)}`;
+          link.textContent = namespace.name;
+          nameCell.appendChild(link);
+          row.appendChild(nameCell);
+          const statusCell = document.createElement('td');
+          statusCell.textContent = namespace.details.phase || '—';
+          row.appendChild(statusCell);
+          body.appendChild(row);
+        }
+        if (!body.children.length) showError('没有找到 Namespace');
+        continuation = result.continue || '';
+        document.querySelector('#namespace-count').textContent = `${body.children.length}${result.has_more ? '+' : ''}`;
+        document.querySelector('#namespace-hint').textContent = result.has_more ? '当前结果未全部加载' : '选择 Namespace 查看工作负载和 Pod';
+        document.querySelector('#load-more-wrap').classList.toggle('active', result.has_more);
+      } catch (error) {
+        document.querySelector('#cluster-name').textContent = '集群信息加载失败';
+        showError(error.message);
+      }
+    }
+
+    document.querySelector('#load-more').addEventListener('click', async event => {
+      event.currentTarget.disabled = true;
+      await loadNamespaces(true);
+      event.currentTarget.disabled = false;
+    });
+    loadNamespaces();
+  </script>
+</body>
+</html>
+{{ end }}

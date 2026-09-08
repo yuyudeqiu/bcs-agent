@@ -1,0 +1,122 @@
+{{ define "index.html" }}
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BCS Agent</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #f4f7fb; color: #172033; }
+    header { padding: 24px 32px; color: #fff; background: #182b56; }
+    header h1 { margin: 0 0 6px; font-size: 22px; }
+    header p { margin: 0; color: #bdcae5; font-size: 14px; }
+    main { max-width: 1180px; margin: 28px auto; padding: 0 24px; }
+    .panel { overflow: hidden; border: 1px solid #e2e8f2; border-radius: 12px; background: #fff; box-shadow: 0 8px 24px rgba(31, 50, 86, .06); }
+    .toolbar { display: flex; gap: 10px; align-items: end; padding: 18px 20px; border-bottom: 1px solid #edf1f7; }
+    label { display: grid; gap: 6px; color: #526176; font-size: 12px; }
+    input { width: 280px; padding: 9px 11px; border: 1px solid #ccd6e5; border-radius: 7px; font: inherit; }
+    button { padding: 10px 16px; border: 0; border-radius: 7px; background: #1768e5; color: #fff; cursor: pointer; font-weight: 600; }
+    button:disabled { cursor: wait; opacity: .65; }
+    .summary { margin-left: auto; color: #607089; font-size: 14px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 13px 20px; border-bottom: 1px solid #edf1f7; text-align: left; white-space: nowrap; font-size: 14px; }
+    th { background: #f8fafd; color: #526176; font-size: 12px; letter-spacing: .02em; }
+    tbody tr:hover { background: #f8fbff; }
+    .status { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #eaf7ef; color: #18794e; font-size: 12px; }
+    .empty, .error { padding: 54px 20px; text-align: center; color: #718096; }
+    .error { color: #b42318; }
+    @media (max-width: 640px) { header { padding: 20px; } main { margin: 18px auto; padding: 0 12px; } .toolbar { align-items: stretch; flex-direction: column; } input { width: 100%; } .summary { margin-left: 0; } }
+  </style>
+</head>
+<body>
+  <header><h1>BCS Agent</h1><p>集群运维工作台</p></header>
+  <main>
+    <section class="panel">
+      <form id="filters" class="toolbar">
+        <label>项目 ID（可选）<input id="project-id" name="project_id" placeholder="例如：proj-001"></label>
+        <button id="refresh" type="submit">查询集群</button>
+        <span id="summary" class="summary"></span>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>集群名称</th><th>集群 ID</th><th>状态</th><th>环境</th><th>Kubernetes</th><th>节点数</th></tr></thead>
+          <tbody id="clusters"><tr><td class="empty" colspan="6">正在加载集群...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script>
+    const form = document.querySelector('#filters');
+    const button = document.querySelector('#refresh');
+    const body = document.querySelector('#clusters');
+    const summary = document.querySelector('#summary');
+
+    function cell(row, value) {
+      const element = document.createElement('td');
+      element.textContent = value || '—';
+      row.appendChild(element);
+    }
+
+    async function loadClusters() {
+      button.disabled = true;
+      summary.textContent = '加载中...';
+      const projectID = document.querySelector('#project-id').value.trim();
+      const query = projectID ? `?project_id=${encodeURIComponent(projectID)}` : '';
+      try {
+        const response = await fetch(`/api/v1/clusters${query}`);
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error?.message || '查询失败');
+        body.replaceChildren();
+        for (const cluster of result.data) {
+          const row = document.createElement('tr');
+          const nameCell = document.createElement('td');
+          const link = document.createElement('a');
+          link.href = `/clusters/${encodeURIComponent(cluster.cluster_id)}`;
+          link.textContent = cluster.cluster_name || cluster.cluster_id;
+          nameCell.appendChild(link);
+          row.appendChild(nameCell);
+          cell(row, cluster.cluster_id);
+          const statusCell = document.createElement('td');
+          const status = document.createElement('span');
+          status.className = 'status';
+          status.textContent = cluster.status || '未知';
+          statusCell.appendChild(status);
+          row.appendChild(statusCell);
+          cell(row, cluster.environment);
+          cell(row, cluster.kubernetes_version);
+          cell(row, cluster.node_count ? String(cluster.node_count) : '—');
+          body.appendChild(row);
+        }
+        if (!result.total) {
+          const row = document.createElement('tr');
+          const empty = document.createElement('td');
+          empty.colSpan = 6;
+          empty.className = 'empty';
+          empty.textContent = '没有找到集群';
+          row.appendChild(empty);
+          body.appendChild(row);
+        }
+        summary.textContent = `共 ${result.total} 个集群`;
+      } catch (error) {
+        const row = document.createElement('tr');
+        const message = document.createElement('td');
+        message.colSpan = 6;
+        message.className = 'error';
+        message.textContent = error.message;
+        row.appendChild(message);
+        body.replaceChildren(row);
+        summary.textContent = '';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    form.addEventListener('submit', event => { event.preventDefault(); loadClusters(); });
+    loadClusters();
+  </script>
+</body>
+</html>
+{{ end }}

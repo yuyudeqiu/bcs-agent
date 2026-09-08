@@ -14,9 +14,13 @@ type cliOptions struct {
 	runOnce bool
 }
 
+type serverOptions struct {
+	addr string
+}
+
 type commandRunner struct {
 	cli    func(context.Context, cliOptions) error
-	server func(context.Context) error
+	server func(context.Context, serverOptions) error
 }
 
 func newRootCommand(runner commandRunner, input io.Reader, output, errorOutput io.Writer) *cobra.Command {
@@ -70,13 +74,19 @@ func newCLICommand(run func(context.Context, cliOptions) error) *cobra.Command {
 	return command
 }
 
-func newServerCommand(run func(context.Context) error) *cobra.Command {
-	return &cobra.Command{
+func newServerCommand(run func(context.Context, serverOptions) error) *cobra.Command {
+	var addr string
+	command := &cobra.Command{
 		Use:   "server",
 		Short: "启动 Web 服务",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			return run(command.Context())
+			if strings.TrimSpace(addr) == "" {
+				return fmt.Errorf("addr 不能为空")
+			}
+			return run(command.Context(), serverOptions{addr: addr})
 		},
 	}
+	command.Flags().StringVar(&addr, "addr", ":8080", "HTTP 服务监听地址")
+	return command
 }

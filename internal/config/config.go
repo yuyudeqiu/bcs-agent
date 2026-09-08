@@ -25,27 +25,35 @@ type Config struct {
 }
 
 func Load() (Config, error) {
-	cfg := Config{
-		OpenAI: OpenAIConfig{
-			APIKey:          os.Getenv("OPENAI_API_KEY"),
-			Model:           os.Getenv("OPENAI_MODEL"),
-			BaseURL:         os.Getenv("OPENAI_BASE_URL"),
-			ByAzure:         os.Getenv("OPENAI_BY_AZURE") == "true",
-			ReasoningEffort: os.Getenv("OPENAI_REASONING_EFFORT"),
-		},
-		BCS: BCSConfig{
-			BaseURL:            os.Getenv("BCS_BASE_URL"),
-			APIToken:           os.Getenv("BCS_API_TOKEN"),
-			InsecureSkipVerify: os.Getenv("BCS_INSECURE_SKIP_VERIFY") != "false",
-		},
+	openAI, err := LoadOpenAI()
+	if err != nil {
+		return Config{}, err
 	}
+	return Config{OpenAI: openAI, BCS: LoadBCS()}, nil
+}
 
-	if cfg.OpenAI.APIKey == "" {
-		return Config{}, fmt.Errorf("缺少环境变量 OPENAI_API_KEY")
+func LoadOpenAI() (OpenAIConfig, error) {
+	cfg := OpenAIConfig{
+		APIKey:          os.Getenv("OPENAI_API_KEY"),
+		Model:           os.Getenv("OPENAI_MODEL"),
+		BaseURL:         os.Getenv("OPENAI_BASE_URL"),
+		ByAzure:         os.Getenv("OPENAI_BY_AZURE") == "true",
+		ReasoningEffort: os.Getenv("OPENAI_REASONING_EFFORT"),
 	}
-	if cfg.OpenAI.Model == "" {
-		return Config{}, fmt.Errorf("缺少环境变量 OPENAI_MODEL")
+	if cfg.APIKey == "" {
+		return OpenAIConfig{}, fmt.Errorf("缺少环境变量 OPENAI_API_KEY")
 	}
-
+	if cfg.Model == "" {
+		return OpenAIConfig{}, fmt.Errorf("缺少环境变量 OPENAI_MODEL")
+	}
 	return cfg, nil
+}
+
+// LoadBCS 读取不依赖模型配置的 BCS 客户端配置。
+func LoadBCS() BCSConfig {
+	return BCSConfig{
+		BaseURL:            os.Getenv("BCS_BASE_URL"),
+		APIToken:           os.Getenv("BCS_API_TOKEN"),
+		InsecureSkipVerify: os.Getenv("BCS_INSECURE_SKIP_VERIFY") != "false",
+	}
 }
